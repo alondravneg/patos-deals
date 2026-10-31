@@ -103,7 +103,7 @@ function Resultado({
 }
 
 export default function CalculadoraInterna() {
-  const [dolar, setDolar] = useState("17.23");
+  const [dolar, setDolar] = useState(DOLAR_REAL.toString());
   const [subtotal, setSubtotal] = useState("");
   const [descuentoPorcentaje, setDescuentoPorcentaje] = useState("");
   const [descuentoFijo, setDescuentoFijo] = useState("");
