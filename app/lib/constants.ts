@@ -1,4 +1,4 @@
-export const DOLAR_REAL = 17.5;
+export const DOLAR_REAL = 18.87;
 export const DOLAR_MAYORISTA = 19;
 export const TAX = 1.0825;
 export const MARGEN_VENTA = 1.4;
