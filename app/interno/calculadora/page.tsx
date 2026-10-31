@@ -265,31 +265,6 @@ export default function CalculadoraInterna() {
               </div>
             </section>
 
-            {/* Desglose de costos */}
-            <section className="mt-6 border-t border-dotted border-[#0C304F]/15 pt-5">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 className="font-serif text-sm font-bold uppercase tracking-[0.08em] text-[#0C304F]">
-                  Desglose de costos
-                </h2>
-
-                <span className="rounded-full bg-[#F8F0E8] px-2.5 py-1 text-[10px] font-semibold text-[#78909C]">
-                  USD · MXN
-                </span>
-              </div>
-
-              <Resultado
-                label="Total"
-                valor={mostrarResultados ? formatoUSD(total) : "—"}
-                descripcion="Precio después de descuentos."
-              />
-
-              <Resultado
-                label="Costo total"
-                valor={mostrarResultados ? formatoMXN(costoTotal) : "—"}
-                descripcion={`Incluye impuesto del 8.25% y dólar a $${dolarNumero.toFixed(2)} MXN.`}
-              />
-            </section>
-
             {/* Precio recomendado */}
             <section className="relative mt-5 overflow-hidden rounded-2xl bg-[#0C304F] p-5 text-white sm:p-6">
               <div className="pointer-events-none absolute -right-7 -top-9 h-24 w-24 rounded-full border-[12px] border-white/[0.05]" />
@@ -315,10 +290,35 @@ export default function CalculadoraInterna() {
                   <p className="flex items-start gap-2 text-[10px] leading-4 text-white/70 sm:text-xs">
                     <span className="mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[#E2732D]" />
                     Calculado con impuesto del 8.25% y un factor de venta de
-                    1.40× sobre el costo total.
+                    1.40 × sobre el costo total.
                   </p>
                 </div>
               </div>
+            </section>
+
+            {/* Desglose de costos */}
+            <section className="mt-6 border-t border-dotted border-[#0C304F]/15 pt-5">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h2 className="font-serif text-sm font-bold uppercase tracking-[0.08em] text-[#0C304F]">
+                  Desglose de costos
+                </h2>
+
+                <span className="rounded-full bg-[#F8F0E8] px-2.5 py-1 text-[10px] font-semibold text-[#78909C]">
+                  USD · MXN
+                </span>
+              </div>
+
+              <Resultado
+                label="Total"
+                valor={mostrarResultados ? formatoUSD(total) : "—"}
+                descripcion="Precio después de descuentos."
+              />
+
+              <Resultado
+                label="Costo total"
+                valor={mostrarResultados ? formatoMXN(costoTotal) : "—"}
+                descripcion={`Incluye impuesto del 8.25% y dólar a $${dolarNumero.toFixed(2)} MXN.`}
+              />
             </section>
 
             {/* Descuentos adicionales: ahora debajo del precio recomendado */}
