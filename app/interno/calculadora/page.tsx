@@ -1,5 +1,6 @@
 "use client";
 
+import { DOLAR_REAL } from "@/app/lib/constants";
 import { useState } from "react";
 
 const TAX = 1.0825;
@@ -166,7 +167,7 @@ export default function CalculadoraInterna() {
         <header className="mb-7 text-center">
           <div className="mb-3 flex justify-center">
             <img
-              src="/res/img/logo.png"
+              src="/res/img/patos-deals.svg"
               alt="Patos Deals"
               className="h-16 w-auto object-contain sm:h-20"
             />
@@ -201,7 +202,7 @@ export default function CalculadoraInterna() {
                   label="Dólar (MXN por USD)"
                   value={dolar}
                   onChange={setDolar}
-                  placeholder="17.23"
+                  placeholder={DOLAR_REAL.toString()}
                   suffix="MXN"
                   required
                   helper="Tipo de cambio de referencia."
