@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
@@ -35,6 +36,7 @@ type ProductRow = {
   color: string;
   quantity: string;
   unit_cost_usd: string;
+  personal_use: boolean;
 };
 
 const TAX_RATE = 0.0825;
@@ -71,6 +73,7 @@ function newProduct(): ProductRow {
     color: "",
     quantity: "1",
     unit_cost_usd: "",
+    personal_use: false,
   };
 }
 
@@ -82,6 +85,31 @@ function getErrorMessage(error: unknown) {
   return "Ocurrió un error inesperado.";
 }
 
+function getProductSignature(product: {
+  product_name: string | null;
+  brand: string | null;
+  model: string | null;
+  sku: string | null;
+  size: string | null;
+  color: string | null;
+  quantity: number | string;
+  unit_cost_usd: number | string;
+}) {
+  const normalize = (value: string | null) =>
+    (value ?? "").trim().toLocaleLowerCase();
+
+  return JSON.stringify([
+    normalize(product.product_name),
+    normalize(product.brand),
+    normalize(product.model),
+    normalize(product.sku),
+    normalize(product.size),
+    normalize(product.color),
+    Number(product.quantity),
+    Number(product.unit_cost_usd).toFixed(2),
+  ]);
+}
+
 export default function ComprasPage() {
   const [periods, setPeriods] = useState<Period[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
@@ -90,6 +118,8 @@ export default function ComprasPage() {
   const [storeId, setStoreId] = useState("");
   const [notes, setNotes] = useState("");
   const [products, setProducts] = useState<ProductRow[]>([newProduct()]);
+  const lastProductRef = useRef<HTMLElement | null>(null);
+  const [scrollToNewProduct, setScrollToNewProduct] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -188,6 +218,16 @@ export default function ComprasPage() {
     void loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!scrollToNewProduct) return;
+
+    lastProductRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+    setScrollToNewProduct(false);
+  }, [products.length, scrollToNewProduct]);
+
   const productTotals = useMemo(() => {
     const rows = products.map((product) => {
       const quantity = Number(product.quantity);
@@ -222,18 +262,41 @@ export default function ComprasPage() {
       };
     });
 
+    const itemCount = products.reduce((sum, product) => {
+      const quantity = Number(product.quantity);
+      const hasName = product.product_name.trim().length > 0;
+      return hasName && Number.isInteger(quantity) && quantity > 0
+        ? sum + quantity
+        : sum;
+    }, 0);
+
+    const productLineCount = products.filter(
+      (product) => product.product_name.trim().length > 0,
+    ).length;
+
     return {
       rows,
+      itemCount,
+      productLineCount,
+      personalUseCount: products.reduce((sum, product) => {
+        const quantity = Number(product.quantity);
+        return product.personal_use &&
+          product.product_name.trim().length > 0 &&
+          Number.isInteger(quantity) &&
+          quantity > 0
+          ? sum + quantity
+          : sum;
+      }, 0),
       subtotalUsd: rows.reduce((sum, row) => sum + row.subtotalUsd, 0),
       taxUsd: rows.reduce((sum, row) => sum + row.taxUsd, 0),
       totalMxn: rows.reduce((sum, row) => sum + row.totalMxn, 0),
     };
   }, [products, selectedPeriod]);
 
-  function updateProduct(
+  function updateProduct<K extends keyof Omit<ProductRow, "rowId">>(
     rowId: string,
-    field: keyof Omit<ProductRow, "rowId">,
-    value: string,
+    field: K,
+    value: ProductRow[K],
   ) {
     setProducts((current) =>
       current.map((product) =>
@@ -244,6 +307,7 @@ export default function ComprasPage() {
 
   function addProduct() {
     setProducts((current) => [...current, newProduct()]);
+    setScrollToNewProduct(true);
   }
 
   function removeProduct(rowId: string) {
@@ -353,6 +417,34 @@ export default function ComprasPage() {
       return;
     }
 
+    // purchase_items representa una línea de producto. Si dos líneas tienen
+    // exactamente los mismos datos, deben compartir el mismo destino de inventario.
+    const usageBySignature = new Map<string, boolean>();
+    for (const product of products) {
+      const signature = getProductSignature({
+        product_name: product.product_name,
+        brand: product.brand || null,
+        model: product.model || null,
+        sku: product.sku || null,
+        size: product.size || null,
+        color: product.color || null,
+        quantity: Number(product.quantity),
+        unit_cost_usd: Number(product.unit_cost_usd),
+      });
+
+      const previousUsage = usageBySignature.get(signature);
+      if (
+        previousUsage !== undefined &&
+        previousUsage !== product.personal_use
+      ) {
+        setError(
+          "Hay dos líneas idénticas con destinos diferentes. Junta esas unidades en una sola línea o distingue sus datos (por ejemplo, talla, color o SKU) para indicar cuáles serán de uso personal.",
+        );
+        return;
+      }
+      usageBySignature.set(signature, product.personal_use);
+    }
+
     setSaving(true);
 
     try {
@@ -385,15 +477,118 @@ export default function ComprasPage() {
         items_count: number;
       };
 
-      setSuccess(
-        `¡Compra ${result.ticket_number} registrada correctamente! ` +
-          `${result.items_count} producto(s). Total: ${money(productTotals.totalMxn)}.`,
+      let personalUnitsMarked = 0;
+      let personalUseWarning = "";
+
+      const personalSignatures = new Set(
+        products
+          .filter((product) => product.personal_use)
+          .map((product) =>
+            getProductSignature({
+              product_name: product.product_name,
+              brand: product.brand || null,
+              model: product.model || null,
+              sku: product.sku || null,
+              size: product.size || null,
+              color: product.color || null,
+              quantity: Number(product.quantity),
+              unit_cost_usd: Number(product.unit_cost_usd),
+            }),
+          ),
       );
+
+      // La compra se conserva aunque el marcado posterior falle. El RPC
+      // set_inventory_unit_usage_status registra además el movimiento de inventario.
+      if (personalSignatures.size > 0) {
+        try {
+          const { data: createdPurchaseItems, error: purchaseItemsError } =
+            await supabase
+              .from("purchase_items")
+              .select(
+                "id, product_name, brand, model, sku, size, color, quantity, unit_cost_usd",
+              )
+              .eq("purchase_id", result.purchase_id);
+
+          if (purchaseItemsError) throw purchaseItemsError;
+
+          const personalPurchaseItemIds = (createdPurchaseItems ?? [])
+            .filter((item) =>
+              personalSignatures.has(
+                getProductSignature({
+                  product_name: item.product_name,
+                  brand: item.brand,
+                  model: item.model,
+                  sku: item.sku,
+                  size: item.size,
+                  color: item.color,
+                  quantity: item.quantity,
+                  unit_cost_usd: item.unit_cost_usd,
+                }),
+              ),
+            )
+            .map((item) => item.id);
+
+          if (personalPurchaseItemIds.length === 0) {
+            throw new Error(
+              "No encontramos las líneas marcadas como uso personal dentro de la compra recién creada.",
+            );
+          }
+
+          const { data: personalUnits, error: unitsError } = await supabase
+            .from("inventory_units")
+            .select("id")
+            .in("purchase_item_id", personalPurchaseItemIds);
+
+          if (unitsError) throw unitsError;
+
+          const expectedPersonalUnits = products.reduce((sum, product) => {
+            if (!product.personal_use) return sum;
+            return sum + Number(product.quantity);
+          }, 0);
+
+          if ((personalUnits ?? []).length !== expectedPersonalUnits) {
+            throw new Error(
+              `Esperábamos ${expectedPersonalUnits} unidades para uso personal y encontramos ${(personalUnits ?? []).length}.`,
+            );
+          }
+
+          for (const unit of personalUnits ?? []) {
+            const { error: statusError } = await supabase.rpc(
+              "set_inventory_unit_usage_status",
+              {
+                p_inventory_unit_id: unit.id,
+                p_target_status: "personal_use",
+                p_reason: `Marcado como uso personal al registrar la compra ${result.ticket_number}`,
+              },
+            );
+
+            if (statusError) throw statusError;
+            personalUnitsMarked += 1;
+          }
+        } catch (usageError) {
+          personalUseWarning = getErrorMessage(usageError);
+        }
+      }
 
       setProducts([newProduct()]);
       setNotes("");
 
+      // Recargar antes de mostrar los mensajes para que loadData no los limpie.
       await loadData();
+
+      setSuccess(
+        `¡Compra ${result.ticket_number} registrada correctamente! ` +
+          `${result.items_count} producto(s). Total: ${money(productTotals.totalMxn)}.` +
+          (personalUnitsMarked > 0
+            ? ` ${personalUnitsMarked} unidad(es) quedaron en uso personal.`
+            : ""),
+      );
+
+      if (personalUseWarning) {
+        setError(
+          `La compra ${result.ticket_number} SÍ quedó registrada, pero no se pudieron marcar todas las unidades de uso personal (${personalUnitsMarked} de ${productTotals.personalUseCount}). No registres el mismo ticket otra vez. Revisa esas unidades en Inventario. Detalle: ${personalUseWarning}`,
+        );
+      }
     } catch (err) {
       setError(`No pudimos registrar la compra. ${getErrorMessage(err)}`);
     } finally {
@@ -671,7 +866,7 @@ export default function ComprasPage() {
               disabled={saving}
               className="rounded-xl border border-[#D9E5EC] bg-[#F7FAFC] px-4 py-2.5 text-sm font-semibold text-[#0C304F] transition hover:bg-[#EDF4F8] disabled:opacity-50"
             >
-              + Agregar producto
+              + 
             </button>
           </div>
 
@@ -684,6 +879,9 @@ export default function ComprasPage() {
               return (
                 <article
                   key={product.rowId}
+                  ref={
+                    index === products.length - 1 ? lastProductRef : undefined
+                  }
                   className="rounded-xl border border-[#EFE7DE] p-4 sm:p-5"
                 >
                   <div className="mb-4 flex items-center justify-between gap-3">
@@ -816,9 +1014,59 @@ export default function ComprasPage() {
                       </div>
                     </div>
                   </div>
+
+                  <label
+                    className={`mt-4 flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition ${
+                      product.personal_use
+                        ? "border-violet-200 bg-violet-50"
+                        : "border-[#EFE7DE] bg-[#FDF9F7] hover:border-violet-200"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={product.personal_use}
+                      onChange={(event) =>
+                        updateProduct(
+                          product.rowId,
+                          "personal_use",
+                          event.target.checked,
+                        )
+                      }
+                      disabled={saving}
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-violet-600"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-[#0C304F]">
+                        Marcar para uso personal
+                      </span>
+                      <span className="mt-0.5 block text-xs leading-5 text-[#78909C]">
+                        Las{" "}
+                        {Number.isInteger(Number(product.quantity)) &&
+                        Number(product.quantity) > 0
+                          ? product.quantity
+                          : "unidades"}{" "}
+                        unidad(es) de esta línea se apartarán desde el registro
+                        y no estarán disponibles para venta.
+                      </span>
+                    </span>
+                  </label>
                 </article>
               );
             })}
+          </div>
+
+          <div className="flex justify-center border-t border-dashed border-[#EFE7DE] px-4 py-5 sm:px-6">
+            <button
+              type="button"
+              onClick={addProduct}
+              disabled={saving}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#D9E5EC] bg-[#F7FAFC] px-4 py-3 text-sm font-semibold text-[#0C304F] transition hover:border-[#36709E] hover:bg-[#EDF4F8] disabled:opacity-50 sm:w-auto sm:min-w-64"
+            >
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0C304F] text-base leading-none text-white">
+                +
+              </span>
+              Agregar otro producto
+            </button>
           </div>
 
           <div className="border-t border-[#EFE7DE] bg-[#FDF9F7] p-5 sm:p-7">
@@ -827,6 +1075,24 @@ export default function ComprasPage() {
                 <span>Subtotal de productos (USD)</span>
                 <span className="font-medium text-[#0C304F]">
                   {money(productTotals.subtotalUsd, "USD")}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between gap-4 rounded-lg bg-white px-3 py-2.5 text-sm">
+                <span className="font-semibold text-[#0C304F]">
+                  Artículos en el ticket
+                </span>
+                <span className="text-right">
+                  <span className="block rounded-full bg-[#E8F0F5] px-3 py-1 font-bold text-[#0C304F]">
+                    {productTotals.itemCount}{" "}
+                    {productTotals.itemCount === 1 ? "artículo" : "artículos"}
+                  </span>
+                  <span className="mt-1 block text-[11px] text-[#78909C]">
+                    {productTotals.productLineCount}{" "}
+                    {productTotals.productLineCount === 1
+                      ? "producto"
+                      : "productos"}
+                  </span>
                 </span>
               </div>
 
@@ -845,6 +1111,13 @@ export default function ComprasPage() {
                   {money(productTotals.totalMxn)}
                 </span>
               </div>
+
+              {productTotals.personalUseCount > 0 && (
+                <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs font-medium text-violet-800">
+                  {productTotals.personalUseCount} unidad(es) marcadas para uso
+                  personal.
+                </p>
+              )}
 
               <p className="text-xs leading-5 text-[#78909C]">
                 El costo incluye el impuesto del 8.25 % y el tipo de cambio del
