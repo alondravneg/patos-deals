@@ -55,7 +55,7 @@ export default function Home() {
         <header className="mb-6 text-center sm:mb-10">
           <div className="mb-5 flex justify-center">
             <img
-              src="/res/img/logo.png"
+              src="/res/img/patos-deals.svg"
               alt="Patos Deals"
               className="h-20 w-auto object-contain sm:h-28"
             />

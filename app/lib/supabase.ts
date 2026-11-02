@@ -6,7 +6,7 @@ export function createClient() {
 
   if (!supabaseUrl || !supabaseKey) {
     throw new Error(
-      "Faltan las variables de entorno de Supabase. Revisa el archivo .env.local."
+      "Faltan las variables de entorno de Supabase. Revisa el archivo .env.local.",
     );
   }
 

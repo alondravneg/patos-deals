@@ -2,7 +2,9 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { createClient } from "@/app/lib/supabase";
+import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -38,11 +40,7 @@ export default function AdminLoginPage() {
         .eq("id", data.user.id)
         .maybeSingle();
 
-      if (
-        profileError ||
-        !profile ||
-        !profile.active
-      ) {
+      if (profileError || !profile || !profile.active) {
         await supabase.auth.signOut();
         setError("Tu cuenta no tiene un perfil activo configurado.");
         return;
@@ -77,85 +75,234 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#F8F5F1] px-5 py-10 text-[#222222]">
-      <section className="w-full max-w-md rounded-2xl border border-[#EFE7DE] bg-white p-8 shadow-sm sm:p-10">
-        <div className="mb-8">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#5B0AB3]">
-            Patos Deals
-          </p>
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-brand-navy px-5 py-10 sm:px-8">
+      {/* Decoración del fondo */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-brand-blue/30 blur-3xl"
+      />
 
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-            Bienvenido
-          </h1>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -bottom-40 -left-32 h-96 w-96 rounded-full bg-brand-orange/20 blur-3xl"
+      />
 
-          <p className="mt-2 text-sm leading-6 text-[#737373]">
-            Inicia sesión para acceder al panel administrativo.
-          </p>
-        </div>
+      <div className="relative grid w-full max-w-5xl overflow-hidden rounded-3xl border border-white/10 bg-brand-white shadow-2xl md:min-h-[600px] md:grid-cols-2">
+        {/* Panel de identidad de marca: escritorio */}
+        <section className="relative hidden flex-col justify-between overflow-hidden bg-brand-navy p-10 text-brand-white md:flex lg:p-12">
+          {/* Elementos decorativos */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-20 top-24 h-64 w-64 rounded-full border border-white/10"
+          />
 
-        <form onSubmit={handleLogin} className="space-y-5">
-          <div>
-            <label
-              htmlFor="email"
-              className="mb-2 block text-sm font-medium"
-            >
-              Correo electrónico
-            </label>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-10 top-36 h-44 w-44 rounded-full border border-white/10"
+          />
 
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="w-full rounded-xl border border-[#E5DED5] px-4 py-3 outline-none transition focus:border-[#5B0AB3] focus:ring-2 focus:ring-[#5B0AB3]/10"
-              placeholder="tu@correo.com"
+          <div className="relative z-10">
+            {/* Logo */}
+            {/* Logo en naranja claro */}
+            <div
+              role="img"
+              aria-label="Patos Deals"
+              className="mb-4 h-24 w-56"
+              style={{
+                backgroundColor: "var(--brand-orange-light)",
+                WebkitMaskImage: "url('/res/img/patos-deals.svg')",
+                maskImage: "url('/res/img/patos-deals.svg')",
+                WebkitMaskRepeat: "no-repeat",
+                maskRepeat: "no-repeat",
+                WebkitMaskPosition: "left center",
+                maskPosition: "left center",
+                WebkitMaskSize: "contain",
+                maskSize: "contain",
+              }}
             />
-          </div>
 
-          <div>
-            <label
-              htmlFor="password"
-              className="mb-2 block text-sm font-medium"
-            >
-              Contraseña
-            </label>
-
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="w-full rounded-xl border border-[#E5DED5] px-4 py-3 outline-none transition focus:border-[#5B0AB3] focus:ring-2 focus:ring-[#5B0AB3]/10"
-              placeholder="Tu contraseña"
-            />
-          </div>
-
-          {error && (
-            <p
-              role="alert"
-              className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"
-            >
-              {error}
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-orange-light">
+              Panel administrativo
             </p>
-          )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-xl bg-[#5B0AB3] px-4 py-3 font-medium text-white transition hover:bg-[#4A0893] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading ? "Verificando..." : "Iniciar sesión"}
-          </button>
-        </form>
+            <h2
+              className="mt-8 max-w-sm font-heading text-4xl font-semibold leading-tight lg:text-5xl"
+              style={{ color: "var(--brand-white)" }}
+            >
+              Las mejores oportunidades empiezan aquí.
+            </h2>
 
-        <p className="mt-8 text-center text-xs text-[#737373]">
-          Acceso exclusivo para usuarios autorizados.
-        </p>
-      </section>
+            <p className="mt-6 max-w-sm text-base leading-7 text-brand-white/70">
+              Administra tus ofertas, mantén tu información organizada y
+              continúa haciendo crecer tu plataforma.
+            </p>
+          </div>
+
+          {/* Tarjeta informativa */}
+          <div className="relative z-10 mt-12 rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-orange/15 text-brand-orange-light">
+                <ShieldCheck size={21} />
+              </div>
+
+              <div>
+                <p className="font-semibold text-brand-white">Acceso seguro</p>
+
+                <p className="mt-1 text-sm leading-6 text-brand-white/60">
+                  Un espacio exclusivo para administrar Patos Deals.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <p className="relative z-10 mt-8 text-xs tracking-wide text-brand-white/40">
+            PATOS DEALS · PANEL ADMINISTRATIVO
+          </p>
+        </section>
+
+        {/* Formulario de inicio de sesión */}
+        <section className="flex items-center justify-center bg-brand-white px-6 py-10 sm:px-10 md:px-10 lg:px-14">
+          <div className="w-full max-w-md">
+            {/* Logo para móvil */}
+            <div className="mb-9 md:hidden">
+              <div
+                role="img"
+                aria-label="Patos Deals"
+                className="h-14 w-52"
+                style={{
+                  backgroundColor: "var(--brand-navy)",
+                  WebkitMaskImage: "url('/res/img/patos-deals.svg')",
+                  maskImage: "url('/res/img/patos-deals.svg')",
+                  WebkitMaskRepeat: "no-repeat",
+                  maskRepeat: "no-repeat",
+                  WebkitMaskPosition: "left center",
+                  maskPosition: "left center",
+                  WebkitMaskSize: "contain",
+                  maskSize: "contain",
+                }}
+              />
+              <p className="mt-2 text-xs text-muted">Panel administrativo</p>
+            </div>
+
+            {/* Encabezado */}
+            <div className="mb-9">
+              <p className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-brand-orange">
+                Bienvenido de nuevo
+              </p>
+
+              <h1 className="font-heading text-4xl font-semibold tracking-tight text-brand-navy sm:text-5xl">
+                Inicia sesión
+              </h1>
+
+              <p className="mt-4 text-sm leading-6 text-muted sm:text-base">
+                Ingresa tus credenciales para acceder a tu espacio de
+                administración.
+              </p>
+            </div>
+
+            <form onSubmit={handleLogin} className="space-y-6">
+              {/* Correo electrónico */}
+              <div>
+                <label
+                  htmlFor="email"
+                  className="mb-2 block text-sm font-semibold text-brand-navy"
+                >
+                  Correo electrónico
+                </label>
+
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="tu@correo.com"
+                  className="w-full rounded-xl border border-border bg-surface px-4 py-3.5 text-sm text-brand-navy outline-none transition placeholder:text-muted/70 focus:border-brand-blue focus:ring-4 focus:ring-brand-blue/10"
+                />
+              </div>
+
+              {/* Contraseña */}
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <label
+                    htmlFor="password"
+                    className="block text-sm font-semibold text-brand-navy"
+                  >
+                    Contraseña
+                  </label>
+
+                  <LockKeyhole
+                    size={16}
+                    className="text-muted"
+                    aria-hidden="true"
+                  />
+                </div>
+
+                <input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Ingresa tu contraseña"
+                  className="w-full rounded-xl border border-border bg-surface px-4 py-3.5 text-sm text-brand-navy outline-none transition placeholder:text-muted/70 focus:border-brand-blue focus:ring-4 focus:ring-brand-blue/10"
+                />
+              </div>
+
+              {/* Mensajes de error */}
+              {error && (
+                <p
+                  role="alert"
+                  aria-live="polite"
+                  className="rounded-xl border border-danger/20 bg-danger/5 px-4 py-3 text-sm leading-6 text-danger"
+                >
+                  {error}
+                </p>
+              )}
+
+              {/* Botón de acceso */}
+              <button
+                type="submit"
+                disabled={loading}
+                className="pd-button-primary group w-full !rounded-xl !py-3.5"
+              >
+                <span>
+                  {loading ? "Verificando acceso..." : "Iniciar sesión"}
+                </span>
+
+                {!loading && (
+                  <ArrowRight
+                    size={18}
+                    className="transition-transform group-hover:translate-x-1"
+                  />
+                )}
+              </button>
+            </form>
+
+            {/* Separador */}
+            <div className="my-8 flex items-center gap-4">
+              <div className="h-px flex-1 bg-border" />
+
+              <span className="text-xs tracking-wide text-muted">
+                ACCESO PRIVADO
+              </span>
+
+              <div className="h-px flex-1 bg-border" />
+            </div>
+
+            <p className="text-center text-xs leading-6 text-muted">
+              Esta plataforma es de uso exclusivo para usuarios autorizados. Si
+              necesitas acceso, contacta con el administrador.
+            </p>
+
+            <p className="mt-8 text-center text-xs text-muted/70">
+              © {new Date().getFullYear()} Patos Deals
+            </p>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }
