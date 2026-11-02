@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -10,6 +11,7 @@ import {
 import {
   AlertCircle,
   ArrowDownToLine,
+  Receipt,
   CalendarDays,
   CheckCircle2,
   CircleDollarSign,
@@ -481,15 +483,23 @@ export default function FinanzasPage() {
               recibidos.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void loadData()}
-            disabled={loading}
-            className="flex items-center justify-center gap-2 rounded-xl border border-[#EFE7DE] bg-white px-4 py-3 text-sm font-semibold transition hover:border-[#36709E] disabled:opacity-50"
-          >
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-            Actualizar información
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Link
+              href="/admin/finanzas/gastos"
+              className="flex items-center justify-center gap-2 rounded-xl bg-[#0C304F] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#17466B]"
+            >
+              <Receipt size={16} /> Gastos operativos
+            </Link>
+            <button
+              type="button"
+              onClick={() => void loadData()}
+              disabled={loading}
+              className="flex items-center justify-center gap-2 rounded-xl border border-[#EFE7DE] bg-white px-4 py-3 text-sm font-semibold transition hover:border-[#36709E] disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+              Actualizar información
+            </button>
+          </div>
         </header>
 
         {error && (
