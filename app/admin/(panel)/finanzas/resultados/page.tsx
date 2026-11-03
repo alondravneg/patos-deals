@@ -37,6 +37,7 @@ type Period = {
 type Sale = {
   id: string;
   folio: string;
+  customer_id: string | null;
   operation_period_id: string | null;
   sale_date: string;
   status: string;
@@ -82,6 +83,50 @@ type Expense = {
   exchange_rate: number | string | null;
 };
 
+type Customer = {
+  id: string;
+  full_name: string;
+};
+
+type Investor = {
+  id: string;
+  full_name: string;
+};
+
+type InvestmentParticipation = {
+  id: string;
+  investor_id: string;
+  operation_period_id: string;
+  participating_capital_mxn: number | string;
+  expected_return_rate: number | string;
+  expected_return_mxn: number | string;
+  validated_return_mxn: number | string | null;
+  status: string;
+};
+
+type InvestorMovement = {
+  id: string;
+  investor_id: string;
+  participation_id: string | null;
+  movement_type:
+    | "return_payment"
+    | "capital_withdrawal"
+    | "reinvestment"
+    | "adjustment";
+  amount_mxn: number | string;
+  movement_date: string;
+};
+
+type InvestorSummary = {
+  investorId: string;
+  name: string;
+  capital: number;
+  returnRate: number;
+  expectedReturn: number;
+  paid: number;
+  pending: number;
+};
+
 type Store = {
   id: string;
   name: string;
@@ -91,6 +136,7 @@ type SaleSummary = {
   sale: Sale;
   total: number;
   units: number;
+  customerName: string;
 };
 
 type StoreSummary = {
@@ -163,12 +209,20 @@ function periodStatusLabel(status: string) {
 export default function FinanzasResultadosPage() {
   const [periods, setPeriods] = useState<Period[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [purchaseItems, setPurchaseItems] = useState<PurchaseItem[]>([]);
   const [inventoryUnits, setInventoryUnits] = useState<InventoryUnit[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
+  const [investors, setInvestors] = useState<Investor[]>([]);
+  const [participations, setParticipations] = useState<
+    InvestmentParticipation[]
+  >([]);
+  const [investorMovements, setInvestorMovements] = useState<
+    InvestorMovement[]
+  >([]);
   const [periodId, setPeriodId] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -183,12 +237,16 @@ export default function FinanzasResultadosPage() {
       const [
         periodsResult,
         salesResult,
+        customersResult,
         saleItemsResult,
         purchasesResult,
         purchaseItemsResult,
         inventoryResult,
         expensesResult,
         storesResult,
+        investorsResult,
+        participationsResult,
+        investorMovementsResult,
       ] = await Promise.all([
         supabase
           .from("operation_periods")
@@ -196,9 +254,12 @@ export default function FinanzasResultadosPage() {
           .order("start_date", { ascending: false }),
         supabase
           .from("sales")
-          .select("id, folio, operation_period_id, sale_date, status")
+          .select(
+            "id, folio, customer_id, operation_period_id, sale_date, status",
+          )
           .neq("status", "cancelled")
           .order("sale_date", { ascending: false }),
+        supabase.from("customers").select("id, full_name").order("full_name"),
         supabase
           .from("sale_items")
           .select(
@@ -218,17 +279,38 @@ export default function FinanzasResultadosPage() {
             "id, operation_period_id, amount_mxn, amount, currency, exchange_rate",
           ),
         supabase.from("stores").select("id, name").order("name"),
+        supabase.from("investors").select("id, full_name").order("full_name"),
+        supabase
+          .from("investment_participations")
+          .select(
+            "id, investor_id, operation_period_id, participating_capital_mxn, expected_return_rate, expected_return_mxn, validated_return_mxn, status",
+          ),
+        supabase
+          .from("investor_movements")
+          .select(
+            "id, investor_id, participation_id, movement_type, amount_mxn, movement_date",
+          ),
       ]);
 
       const results = [
         { label: "periodos de operación", result: periodsResult },
         { label: "ventas", result: salesResult },
+        { label: "clientes", result: customersResult },
         { label: "productos vendidos", result: saleItemsResult },
         { label: "compras", result: purchasesResult },
         { label: "líneas de compra", result: purchaseItemsResult },
         { label: "inventario", result: inventoryResult },
         { label: "gastos operativos", result: expensesResult },
         { label: "tiendas", result: storesResult },
+        { label: "inversionistas", result: investorsResult },
+        {
+          label: "participaciones de inversionistas",
+          result: participationsResult,
+        },
+        {
+          label: "movimientos de inversionistas",
+          result: investorMovementsResult,
+        },
       ];
       const failed = results.find(({ result }) => result.error);
       if (failed?.result.error) {
@@ -254,12 +336,20 @@ export default function FinanzasResultadosPage() {
       const nextPeriods = (periodsResult.data ?? []) as Period[];
       setPeriods(nextPeriods);
       setSales((salesResult.data ?? []) as Sale[]);
+      setCustomers((customersResult.data ?? []) as Customer[]);
       setSaleItems((saleItemsResult.data ?? []) as SaleItem[]);
       setPurchases((purchasesResult.data ?? []) as Purchase[]);
       setPurchaseItems((purchaseItemsResult.data ?? []) as PurchaseItem[]);
       setInventoryUnits((inventoryResult.data ?? []) as InventoryUnit[]);
       setExpenses((expensesResult.data ?? []) as Expense[]);
       setStores((storesResult.data ?? []) as Store[]);
+      setInvestors((investorsResult.data ?? []) as Investor[]);
+      setParticipations(
+        (participationsResult.data ?? []) as InvestmentParticipation[],
+      );
+      setInvestorMovements(
+        (investorMovementsResult.data ?? []) as InvestorMovement[],
+      );
       setPeriodId((current) =>
         current && nextPeriods.some((period) => period.id === current)
           ? current
@@ -354,9 +444,78 @@ export default function FinanzasResultadosPage() {
     }, 0);
     const personalUseUnits = periodPersonalUnits.length;
 
-    const netProfit = grossProfit - operatingExpenses - personalUseCost;
-    const netMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+    // Cada participación tiene un rendimiento esperado calculado en Supabase.
+    // Si el rendimiento fue validado, se usa ese importe; los pagos salen de investor_movements.
+    const periodParticipations = participations.filter(
+      (item) =>
+        item.operation_period_id === periodId && item.status !== "cancelled",
+    );
+    const participationIds = new Set(
+      periodParticipations.map((item) => item.id),
+    );
+    const investorById = new Map(
+      investors.map((investor) => [investor.id, investor.full_name]),
+    );
+    const paidByParticipation = new Map<string, number>();
+    investorMovements.forEach((movement) => {
+      if (
+        movement.movement_type !== "return_payment" ||
+        !movement.participation_id ||
+        !participationIds.has(movement.participation_id)
+      )
+        return;
+      paidByParticipation.set(
+        movement.participation_id,
+        (paidByParticipation.get(movement.participation_id) ?? 0) +
+          Number(movement.amount_mxn),
+      );
+    });
 
+    const investorSummary: InvestorSummary[] = periodParticipations
+      .map((participation) => {
+        const expectedReturn =
+          participation.validated_return_mxn == null
+            ? Number(participation.expected_return_mxn)
+            : Number(participation.validated_return_mxn);
+        const paid = paidByParticipation.get(participation.id) ?? 0;
+        return {
+          investorId: participation.investor_id,
+          name:
+            investorById.get(participation.investor_id) ??
+            "Inversionista no disponible",
+          capital: Number(participation.participating_capital_mxn),
+          returnRate: Number(participation.expected_return_rate),
+          expectedReturn,
+          paid,
+          pending: Math.max(expectedReturn - paid, 0),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const investorReturnTotal = investorSummary.reduce(
+      (sum, investor) => sum + investor.expectedReturn,
+      0,
+    );
+    const investorReturnPaid = investorSummary.reduce(
+      (sum, investor) => sum + investor.paid,
+      0,
+    );
+    const investorReturnPending = investorSummary.reduce(
+      (sum, investor) => sum + investor.pending,
+      0,
+    );
+
+    // El rendimiento total comprometido se resta una sola vez al resultado neto.
+    // El capital aportado no es gasto ni se descuenta de la utilidad.
+    const netProfit = grossProfit - operatingExpenses - personalUseCost;
+    const profitAfterInvestors = netProfit - investorReturnTotal;
+    const netMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+    const retainedMargin =
+      revenue > 0 ? (profitAfterInvestors / revenue) * 100 : 0;
+
+    const customerById = new Map(
+      customers.map((customer) => [customer.id, customer.full_name]),
+    );
     const saleTotals = new Map<string, number>();
     const saleUnitCounts = new Map<string, number>();
     periodSaleItems.forEach((item) => {
@@ -374,6 +533,9 @@ export default function FinanzasResultadosPage() {
         sale,
         total: saleTotals.get(sale.id) ?? 0,
         units: saleUnitCounts.get(sale.id) ?? 0,
+        customerName: sale.customer_id
+          ? (customerById.get(sale.customer_id) ?? "Cliente no disponible")
+          : "Venta sin cliente",
       }))
       .filter((item) => item.units > 0)
       .sort((a, b) => b.total - a.total);
@@ -471,6 +633,12 @@ export default function FinanzasResultadosPage() {
       personalUseUnits,
       netProfit,
       netMargin,
+      investorReturnTotal,
+      investorReturnPaid,
+      investorReturnPending,
+      investorSummary,
+      profitAfterInvestors,
+      retainedMargin,
       purchaseCost,
       purchasedUnits,
       saleCount: saleSummaries.length,
@@ -487,12 +655,16 @@ export default function FinanzasResultadosPage() {
     periods,
     periodId,
     sales,
+    customers,
     saleItems,
     purchases,
     purchaseItems,
     inventoryUnits,
     expenses,
     stores,
+    investors,
+    participations,
+    investorMovements,
   ]);
 
   const pieData = useMemo(() => {
@@ -668,11 +840,20 @@ export default function FinanzasResultadosPage() {
                 icon={<Package size={18} />}
                 tone="purple"
               />
+              <MetricCard
+                label="Rendimiento inversionistas"
+                value={money(report.investorReturnTotal)}
+                detail={`${money(report.investorReturnPaid)} pagado · ${money(report.investorReturnPending)} pendiente`}
+                icon={<CircleDollarSign size={18} />}
+                tone="orange"
+              />
               <div
                 className={`rounded-2xl border p-5 ${report.netProfit >= 0 ? "border-green-200 bg-green-50/70" : "border-red-200 bg-red-50/70"}`}
               >
                 <div className="mb-3 flex items-center justify-between text-sm text-[#78909C]">
-                  <span className="font-semibold">Resultado neto</span>
+                  <span className="font-semibold">
+                    Resultado antes de inversionistas
+                  </span>
                   <CircleDollarSign
                     size={19}
                     className={
@@ -686,7 +867,7 @@ export default function FinanzasResultadosPage() {
                   {money(report.netProfit)}
                 </p>
                 <p className="mt-1 text-xs text-[#78909C]">
-                  Margen neto: {report.netMargin.toFixed(1)}%
+                  Margen antes de rendimientos: {report.netMargin.toFixed(1)}%
                 </p>
               </div>
               <MetricCard
@@ -714,7 +895,7 @@ export default function FinanzasResultadosPage() {
                 }
                 detail={
                   report.highestSale
-                    ? `${report.highestSale.sale.folio} · ${formatDate(report.highestSale.sale.sale_date)}`
+                    ? `${report.highestSale.customerName} · ${formatDate(report.highestSale.sale.sale_date)}`
                     : "Sin ventas registradas"
                 }
                 icon={<ArrowUpRight size={17} />}
@@ -722,7 +903,7 @@ export default function FinanzasResultadosPage() {
               <SmallMetric
                 label="Margen neto"
                 value={`${report.netMargin.toFixed(1)}%`}
-                detail="Resultado neto sobre ventas totales"
+                detail="Resultado antes de rendimientos sobre ventas"
                 icon={<ArrowDownRight size={17} />}
               />
             </section>
@@ -945,11 +1126,29 @@ export default function FinanzasResultadosPage() {
                   className={`mt-2 rounded-xl px-4 py-4 ${report.netProfit >= 0 ? "bg-green-50" : "bg-red-50"}`}
                 >
                   <ResultRow
-                    label="Resultado neto del periodo"
+                    label="Resultado neto antes de inversionistas"
                     value={report.netProfit}
                     strong
                     tone={report.netProfit >= 0 ? "green" : "red"}
                   />
+                </div>
+                <ResultRow
+                  label="(−) Rendimiento comprometido a inversionistas"
+                  value={-report.investorReturnTotal}
+                />
+                <div
+                  className={`mt-2 rounded-xl px-4 py-4 ${report.profitAfterInvestors >= 0 ? "bg-green-50" : "bg-red-50"}`}
+                >
+                  <ResultRow
+                    label="Utilidad disponible para Patos Deals"
+                    value={report.profitAfterInvestors}
+                    strong
+                    tone={report.profitAfterInvestors >= 0 ? "green" : "red"}
+                  />
+                  <p className="mt-1 text-right text-xs text-[#78909C]">
+                    Margen después de inversionistas:{" "}
+                    {report.retainedMargin.toFixed(1)}%
+                  </p>
                 </div>
               </div>
               <div className="mt-5 rounded-xl border border-[#EFE7DE] bg-[#FDF9F7] p-4 text-xs leading-relaxed text-[#78909C]">
@@ -957,9 +1156,124 @@ export default function FinanzasResultadosPage() {
                 compras para reventa se muestran como inversión en inventario y
                 no se restan completas del resultado neto. Su costo se reconoce
                 cuando la unidad se vende; las unidades actualmente marcadas
-                como uso personal se descuentan por su costo unitario. Así
-                evitamos duplicar el costo de la mercancía.
+                como uso personal se descuentan por su costo unitario. El
+                capital aportado por inversionistas tampoco se resta como gasto:
+                únicamente se descuenta el rendimiento pactado del periodo.
               </div>
+            </section>
+
+            <section className="rounded-2xl border border-[#EFE7DE] bg-white p-5 sm:p-6">
+              <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-xl bg-[#E2732D]/10 p-2 text-[#E2732D]">
+                      <CircleDollarSign size={19} />
+                    </div>
+                    <h2 className="font-bold">Utilidad de inversionistas</h2>
+                  </div>
+                  <p className="mt-1 text-sm text-[#78909C]">
+                    Rendimiento comprometido por inversionista para este
+                    periodo, separado entre pagado y pendiente.
+                  </p>
+                </div>
+                <div className="text-left sm:text-right">
+                  <p className="text-xs text-[#78909C]">Pendiente por pagar</p>
+                  <p className="text-xl font-bold text-[#CC6255]">
+                    {money(report.investorReturnPending)}
+                  </p>
+                </div>
+              </div>
+              {report.investorSummary.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[#EFE7DE] px-4 py-9 text-center text-sm text-[#78909C]">
+                  No hay participaciones de inversionistas asignadas a este
+                  periodo.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px] text-left text-sm">
+                    <thead className="border-b border-[#EFE7DE] text-xs uppercase tracking-wide text-[#78909C]">
+                      <tr>
+                        <th className="px-3 py-3 font-semibold">
+                          Inversionista
+                        </th>
+                        <th className="px-3 py-3 text-right font-semibold">
+                          Capital participante
+                        </th>
+                        <th className="px-3 py-3 text-right font-semibold">
+                          Rendimiento
+                        </th>
+                        <th className="px-3 py-3 text-right font-semibold">
+                          Utilidad pactada
+                        </th>
+                        <th className="px-3 py-3 text-right font-semibold">
+                          Pagado
+                        </th>
+                        <th className="px-3 py-3 text-right font-semibold">
+                          Pendiente
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#EFE7DE]">
+                      {report.investorSummary.map((investor) => (
+                        <tr
+                          key={investor.investorId}
+                          className="hover:bg-[#FDF9F7]"
+                        >
+                          <td className="px-3 py-3.5 font-semibold">
+                            {investor.name}
+                          </td>
+                          <td className="px-3 py-3.5 text-right tabular-nums">
+                            {money(investor.capital)}
+                          </td>
+                          <td className="px-3 py-3.5 text-right tabular-nums">
+                            {(investor.returnRate * 100).toFixed(1)}%
+                          </td>
+                          <td className="px-3 py-3.5 text-right font-semibold tabular-nums">
+                            {money(investor.expectedReturn)}
+                          </td>
+                          <td className="px-3 py-3.5 text-right text-green-700 tabular-nums">
+                            {money(investor.paid)}
+                          </td>
+                          <td className="px-3 py-3.5 text-right font-semibold text-[#CC6255] tabular-nums">
+                            {money(investor.pending)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="border-t-2 border-[#EFE7DE] bg-[#FDF9F7]">
+                      <tr>
+                        <td className="px-3 py-3.5 font-bold">Total</td>
+                        <td className="px-3 py-3.5 text-right font-semibold tabular-nums">
+                          {money(
+                            report.investorSummary.reduce(
+                              (sum, investor) => sum + investor.capital,
+                              0,
+                            ),
+                          )}
+                        </td>
+                        <td className="px-3 py-3.5" />
+                        <td className="px-3 py-3.5 text-right font-bold tabular-nums">
+                          {money(report.investorReturnTotal)}
+                        </td>
+                        <td className="px-3 py-3.5 text-right font-bold text-green-700 tabular-nums">
+                          {money(report.investorReturnPaid)}
+                        </td>
+                        <td className="px-3 py-3.5 text-right font-bold text-[#CC6255] tabular-nums">
+                          {money(report.investorReturnPending)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+              <p className="mt-4 rounded-xl bg-[#FDF9F7] p-3 text-xs leading-relaxed text-[#78909C]">
+                Los importes se leen de las participaciones guardadas para este
+                periodo. El rendimiento validado sustituye al esperado cuando
+                existe; los pagos se suman desde los movimientos de tipo{" "}
+                <strong className="text-[#0C304F]">return_payment</strong>{" "}
+                ligados a la participación. El capital participante se muestra
+                como referencia y no se resta de la utilidad.
+              </p>
             </section>
           </>
         )}
