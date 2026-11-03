@@ -50,7 +50,7 @@ type CartItem = {
   retail_price_mxn: number | null;
   wholesale_price_mxn: number | null;
   is_wholesale: boolean;
-  sale_price_mxn: number;
+  sale_price_mxn: string;
 };
 
 type SaleResult = {
@@ -67,7 +67,7 @@ type OperationPeriod = {
   name: string;
   start_date: string;
   end_date: string | null;
-  status: "planning" | "open" | "closed";
+  status: "planning" | "selling" | "finished";
 };
 
 const money = (value: number) =>
@@ -75,7 +75,29 @@ const money = (value: number) =>
     style: "currency",
     currency: "MXN",
     maximumFractionDigits: 2,
-  }).format(value);
+  }).format(Number.isFinite(value) ? value : 0);
+
+function parseAmount(value: string) {
+  const normalized = value.trim().replace(/\s/g, "").replace(/,/g, ".");
+  if (!normalized || normalized === "." || normalized === "-") return 0;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isValidAmountInput(value: string) {
+  const normalized = value.trim().replace(/,/g, ".");
+  return (
+    normalized === "" || /^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(normalized)
+  );
+}
+
+function productGroupKey(productName: string) {
+  return productName.trim().toLocaleLowerCase("es-MX");
+}
+
+function calculateWholesalePrice(unitCostUsd: number) {
+  return (unitCostUsd * 1.0825 * 19 * 1.2).toFixed(2);
+}
 
 const inputClass =
   "w-full rounded-xl border border-[#EFE7DE] bg-white px-4 py-3 text-sm text-[#0C304F] outline-none transition placeholder:text-[#78909C] focus:border-[#36709E] focus:ring-2 focus:ring-[#36709E]/10";
@@ -100,7 +122,10 @@ export default function VentasPage() {
     null,
   );
 
-  const [initialPayment, setInitialPayment] = useState("0");
+  const [initialPayment, setInitialPayment] = useState("");
+  const [separatePrices, setSeparatePrices] = useState<Record<string, boolean>>(
+    {},
+  );
   const [paymentMethod, setPaymentMethod] = useState("transfer");
   const [paymentReference, setPaymentReference] = useState("");
   const [notes, setNotes] = useState("");
@@ -130,7 +155,7 @@ export default function VentasPage() {
           supabase
             .from("operation_periods")
             .select("id, name, start_date, end_date, status")
-            .in("status", ["open", "planning"])
+            .in("status", ["planning", "selling"])
             .order("start_date", { ascending: false }),
 
           supabase
@@ -178,10 +203,14 @@ export default function VentasPage() {
     void loadData();
   }, [loadData]);
 
-  const total = cart.reduce((sum, item) => sum + item.sale_price_mxn, 0);
+  const total = cart.reduce(
+    (sum, item) => sum + parseAmount(item.sale_price_mxn),
+    0,
+  );
 
-  const paymentAmount = Number(initialPayment || 0);
+  const paymentAmount = parseAmount(initialPayment);
   const validPayment =
+    isValidAmountInput(initialPayment) &&
     Number.isFinite(paymentAmount) &&
     paymentAmount >= 0 &&
     paymentAmount <= total;
@@ -210,6 +239,19 @@ export default function VentasPage() {
     return searchable.includes(productSearch.toLowerCase());
   });
 
+  const cartGroups = useMemo(() => {
+    const groups = new Map<string, CartItem[]>();
+
+    cart.forEach((item) => {
+      const key = productGroupKey(item.product_name);
+      const current = groups.get(key) ?? [];
+      current.push(item);
+      groups.set(key, current);
+    });
+
+    return Array.from(groups.entries()).map(([key, items]) => ({ key, items }));
+  }, [cart]);
+
   function addToCart(product: InventoryProduct) {
     if (cart.some((item) => item.inventory_unit_id === product.id)) {
       setError("Este producto ya está agregado a la venta.");
@@ -225,11 +267,17 @@ export default function VentasPage() {
       return;
     }
 
-    const isWholesale = false;
+    const groupKey = productGroupKey(item.product_name);
+    const splitPrice = separatePrices[groupKey] ?? false;
 
-    setCart((current) => [
-      ...current,
-      {
+    setCart((current) => {
+      const existingGroup = current.filter(
+        (cartItem) => productGroupKey(cartItem.product_name) === groupKey,
+      );
+      const inherited = !splitPrice ? existingGroup[0] : undefined;
+      const isWholesale = inherited?.is_wholesale ?? false;
+
+      const newItem: CartItem = {
         inventory_unit_id: product.id,
         unit_number: product.unit_number,
         product_name: item.product_name,
@@ -240,9 +288,13 @@ export default function VentasPage() {
         retail_price_mxn: product.retail_price_mxn,
         wholesale_price_mxn: product.wholesale_price_mxn,
         is_wholesale: isWholesale,
-        sale_price_mxn: 0,
-      },
-    ]);
+        sale_price_mxn: isWholesale
+          ? calculateWholesalePrice(Number(item.unit_cost_usd))
+          : (inherited?.sale_price_mxn ?? ""),
+      };
+
+      return [...current, newItem];
+    });
 
     setError("");
   }
@@ -257,9 +309,66 @@ export default function VentasPage() {
     );
   }
 
+  function updateGroupSalePrice(groupKey: string, value: string) {
+    setCart((current) =>
+      current.map((item) =>
+        productGroupKey(item.product_name) === groupKey
+          ? { ...item, is_wholesale: false, sale_price_mxn: value }
+          : item,
+      ),
+    );
+  }
+
+  function updateGroupWholesale(groupKey: string, wholesale: boolean) {
+    setCart((current) =>
+      current.map((item) =>
+        productGroupKey(item.product_name) === groupKey
+          ? {
+              ...item,
+              is_wholesale: wholesale,
+              sale_price_mxn: wholesale
+                ? calculateWholesalePrice(item.unit_cost_usd)
+                : "",
+            }
+          : item,
+      ),
+    );
+  }
+
+  function toggleSeparatePrices(groupKey: string, split: boolean) {
+    if (!split) {
+      setCart((current) => {
+        const groupItems = current.filter(
+          (item) => productGroupKey(item.product_name) === groupKey,
+        );
+        const first = groupItems[0];
+        if (!first) return current;
+
+        return current.map((item) => {
+          if (productGroupKey(item.product_name) !== groupKey) return item;
+          return {
+            ...item,
+            is_wholesale: first.is_wholesale,
+            sale_price_mxn: first.is_wholesale
+              ? calculateWholesalePrice(item.unit_cost_usd)
+              : first.sale_price_mxn,
+          };
+        });
+      });
+    }
+
+    setSeparatePrices((current) => ({ ...current, [groupKey]: split }));
+  }
+
   function removeFromCart(inventoryUnitId: string) {
     setCart((current) =>
       current.filter((item) => item.inventory_unit_id !== inventoryUnitId),
+    );
+  }
+
+  function removeCartGroup(groupKey: string) {
+    setCart((current) =>
+      current.filter((item) => productGroupKey(item.product_name) !== groupKey),
     );
   }
 
@@ -334,7 +443,7 @@ export default function VentasPage() {
     if (
       cart.some(
         (item) =>
-          !Number.isFinite(item.sale_price_mxn) || item.sale_price_mxn <= 0,
+          !item.sale_price_mxn.trim() || parseAmount(item.sale_price_mxn) <= 0,
       )
     ) {
       setError("Captura un precio de venta mayor que cero para cada producto.");
@@ -358,7 +467,7 @@ export default function VentasPage() {
         p_customer_id: selectedCustomer.id,
         p_items: cart.map((item) => ({
           inventory_unit_id: item.inventory_unit_id,
-          sale_price_mxn: item.sale_price_mxn,
+          sale_price_mxn: parseAmount(item.sale_price_mxn),
           is_wholesale: item.is_wholesale,
         })),
         p_initial_payment: paymentAmount,
@@ -381,7 +490,8 @@ export default function VentasPage() {
       setSelectedCustomer(null);
       setCustomerSearch("");
       setProductSearch("");
-      setInitialPayment("0");
+      setInitialPayment("");
+      setSeparatePrices({});
       setPaymentMethod("transfer");
       setPaymentReference("");
       setNotes("");
@@ -502,9 +612,9 @@ export default function VentasPage() {
             Cargando clientes e inventario...
           </div>
         ) : (
-          <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[1fr_390px]">
-            {/* Columna izquierda */}
-            <div className="space-y-6">
+          <div className="grid grid-cols-1 items-start gap-6 xl:h-[calc(100vh-17rem)] xl:min-h-[720px] xl:grid-cols-[minmax(0,1fr)_390px] xl:items-stretch xl:overflow-hidden">
+            {/* Columna izquierda: su scroll no mueve el resumen */}
+            <div className="min-h-0 space-y-6 xl:h-full xl:overflow-y-auto xl:overscroll-contain xl:pr-2">
               {/* Cliente */}
               <section className="rounded-2xl border border-[#EFE7DE] bg-white p-5 sm:p-6">
                 <div className="mb-5 flex items-center justify-between gap-3">
@@ -799,8 +909,8 @@ export default function VentasPage() {
               </section>
             </div>
 
-            {/* Resumen de venta */}
-            <aside className="space-y-6 xl:sticky xl:top-6">
+            {/* Resumen de venta: scroll independiente */}
+            <aside className="min-h-0 space-y-6 xl:h-full xl:overflow-y-auto xl:overscroll-contain xl:pr-2">
               <section className="rounded-2xl border border-[#EFE7DE] bg-white p-5 sm:p-6">
                 <div className="mb-5 flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -831,137 +941,267 @@ export default function VentasPage() {
                     </p>
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    {cart.map((item) => (
-                      <div
-                        key={item.inventory_unit_id}
-                        className="border-b border-[#EFE7DE] pb-4 last:border-0"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold">
-                              {item.product_name}
-                            </p>
-                            <p className="mt-1 text-xs text-[#78909C]">
-                              Unidad #{item.unit_number}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              removeFromCart(item.inventory_unit_id)
-                            }
-                            className="rounded-lg p-1.5 text-[#78909C] hover:bg-red-50 hover:text-[#CC6255]"
-                            aria-label={`Eliminar ${item.product_name}`}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
+                  <div className="space-y-3">
+                    {cartGroups.map(({ key, items }) => {
+                      const first = items[0];
+                      const splitPrice = separatePrices[key] ?? false;
+                      const groupWholesale = items.every(
+                        (item) => item.is_wholesale,
+                      );
+                      const groupCost = items.reduce(
+                        (sum, item) => sum + item.unit_cost_mxn,
+                        0,
+                      );
+                      const groupSale = items.reduce(
+                        (sum, item) => sum + parseAmount(item.sale_price_mxn),
+                        0,
+                      );
+                      const groupHasPrices = items.every(
+                        (item) => parseAmount(item.sale_price_mxn) > 0,
+                      );
+                      const groupProfit = groupHasPrices
+                        ? groupSale - groupCost
+                        : null;
 
-                        <div className="mt-4 rounded-xl border border-[#EFE7DE] bg-[#FDF9F7] p-3">
-                          <label
-                            htmlFor={`wholesale-${item.inventory_unit_id}`}
-                            className="flex cursor-pointer items-start gap-3"
-                          >
-                            <input
-                              id={`wholesale-${item.inventory_unit_id}`}
-                              type="checkbox"
-                              checked={item.is_wholesale}
-                              onChange={(event) => {
-                                const wholesale = event.target.checked;
-                                const calculatedPrice = wholesale
-                                  ? Number(
-                                      (
-                                        item.unit_cost_usd *
-                                        1.0825 *
-                                        19 *
-                                        1.2
-                                      ).toFixed(2),
-                                    )
-                                  : item.sale_price_mxn;
-
-                                updateCartItem(item.inventory_unit_id, {
-                                  is_wholesale: wholesale,
-                                  sale_price_mxn: calculatedPrice,
-                                });
-                              }}
-                              className="mt-0.5 h-4 w-4 accent-[#E2732D]"
-                            />
-                            <span>
-                              <span className="block text-sm font-semibold text-[#0C304F]">
-                                Aplicar precio de mayoreo
-                              </span>
-                              <span className="mt-1 block text-xs leading-relaxed text-[#78909C]">
-                                Costo USD × 1.0825 × $19 × 1.20
-                              </span>
-                            </span>
-                          </label>
-                        </div>
-
-                        <div className="mt-3">
-                          <label
-                            className="mb-1.5 block text-xs font-semibold text-[#78909C]"
-                            htmlFor={`price-${item.inventory_unit_id}`}
-                          >
-                            Precio de venta (MXN)
-                          </label>
-                          <input
-                            id={`price-${item.inventory_unit_id}`}
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={item.sale_price_mxn}
-                            readOnly={item.is_wholesale}
-                            onChange={(event) =>
-                              updateCartItem(item.inventory_unit_id, {
-                                sale_price_mxn: Number(event.target.value),
-                              })
-                            }
-                            className={`${inputClass} ${item.is_wholesale ? "bg-[#FDF9F7] text-[#78909C]" : ""}`}
-                          />
-                          <p className="mt-1.5 text-xs text-[#78909C]">
-                            {item.is_wholesale
-                              ? "Precio calculado automáticamente."
-                              : "Captura manualmente el precio de menudeo."}
-                          </p>
-                        </div>
-
-                        <div className="mt-3 space-y-2 rounded-lg bg-[#FDF9F7] p-3 text-sm">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-[#78909C]">
-                              Costo original
-                            </span>
-                            <span className="text-right font-medium">
-                              {money(item.unit_cost_mxn)}
-                              <span className="ml-1 block text-xs font-normal text-[#78909C]">
-                                {new Intl.NumberFormat("en-US", {
-                                  style: "currency",
-                                  currency: "USD",
-                                  maximumFractionDigits: 2,
-                                }).format(item.unit_cost_usd)}{" "}
-                                USD
-                              </span>
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-[#78909C]">
-                              Utilidad estimada
-                            </span>
-                            <span
-                              className={`font-semibold ${item.sale_price_mxn - item.unit_cost_mxn >= 0 ? "text-green-700" : "text-red-700"}`}
+                      return (
+                        <div
+                          key={key}
+                          className="rounded-xl border border-[#EFE7DE] p-3 sm:p-4"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-bold">
+                                  {first.product_name}
+                                </p>
+                                <span className="rounded-full bg-[#36709E]/10 px-2 py-0.5 text-[11px] font-semibold text-[#36709E]">
+                                  {items.length}{" "}
+                                  {items.length === 1 ? "unidad" : "unidades"}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-[#78909C]">
+                                {[first.brand, first.model]
+                                  .filter(Boolean)
+                                  .join(" · ") || "Sin marca o modelo"}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeCartGroup(key)}
+                              className="shrink-0 rounded-lg p-1.5 text-[#78909C] transition hover:bg-red-50 hover:text-[#CC6255]"
+                              aria-label={`Eliminar ${first.product_name} del carrito`}
+                              title="Eliminar todas las unidades de este grupo"
                             >
-                              {money(item.sale_price_mxn - item.unit_cost_mxn)}
-                            </span>
+                              <Trash2 size={16} />
+                            </button>
                           </div>
-                          <div className="flex items-center justify-between gap-3 border-t border-[#EFE7DE] pt-2">
-                            <span className="text-[#78909C]">Importe</span>
-                            <span className="font-bold">
-                              {money(item.sale_price_mxn)}
+
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            {items.map((item) => (
+                              <span
+                                key={item.inventory_unit_id}
+                                className="inline-flex items-center gap-1 rounded-md bg-[#FDF9F7] px-2 py-1 text-[11px] text-[#78909C]"
+                              >
+                                Unidad #{item.unit_number}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    removeFromCart(item.inventory_unit_id)
+                                  }
+                                  className="rounded p-0.5 hover:bg-red-50 hover:text-[#CC6255]"
+                                  aria-label={`Quitar unidad ${item.unit_number}`}
+                                >
+                                  <X size={12} />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+
+                          <label className="mt-3 flex cursor-pointer items-center gap-2 rounded-lg bg-[#FDF9F7] px-3 py-2 text-xs text-[#0C304F]">
+                            <input
+                              type="checkbox"
+                              checked={splitPrice}
+                              onChange={(event) =>
+                                toggleSeparatePrices(key, event.target.checked)
+                              }
+                              className="h-4 w-4 accent-[#E2732D]"
+                            />
+                            <span className="font-semibold">
+                              Separar precios por unidad
                             </span>
+                          </label>
+                          <p className="mt-1 text-[11px] leading-relaxed text-[#78909C]">
+                            {splitPrice
+                              ? "Cada unidad puede llevar un precio distinto."
+                              : "Por defecto, todas las unidades con este nombre comparten el mismo precio."}
+                          </p>
+
+                          {!splitPrice ? (
+                            <>
+                              <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-[#EFE7DE] p-2.5">
+                                <input
+                                  type="checkbox"
+                                  checked={groupWholesale}
+                                  onChange={(event) =>
+                                    updateGroupWholesale(
+                                      key,
+                                      event.target.checked,
+                                    )
+                                  }
+                                  className="mt-0.5 h-4 w-4 accent-[#E2732D]"
+                                />
+                                <span>
+                                  <span className="block text-xs font-semibold text-[#0C304F]">
+                                    Aplicar precio de mayoreo a todo el grupo
+                                  </span>
+                                  <span className="mt-0.5 block text-[11px] text-[#78909C]">
+                                    Costo USD × 1.0825 × $19 × 1.20, calculado
+                                    por unidad
+                                  </span>
+                                </span>
+                              </label>
+
+                              {groupWholesale ? (
+                                <div className="mt-3 space-y-1.5 rounded-lg bg-[#FDF9F7] p-3">
+                                  <p className="text-xs font-semibold text-[#78909C]">
+                                    Mayoreo calculado por unidad
+                                  </p>
+                                  {items.map((item) => (
+                                    <div
+                                      key={item.inventory_unit_id}
+                                      className="flex items-center justify-between gap-3 text-xs"
+                                    >
+                                      <span className="text-[#78909C]">
+                                        Unidad #{item.unit_number}
+                                      </span>
+                                      <span className="font-semibold">
+                                        {money(
+                                          parseAmount(item.sale_price_mxn),
+                                        )}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="mt-3">
+                                  <label
+                                    htmlFor={`shared-price-${key}`}
+                                    className="mb-1.5 block text-xs font-semibold text-[#78909C]"
+                                  >
+                                    Precio unitario compartido (MXN)
+                                  </label>
+                                  <input
+                                    id={`shared-price-${key}`}
+                                    type="text"
+                                    inputMode="decimal"
+                                    autoComplete="off"
+                                    value={first.sale_price_mxn}
+                                    onChange={(event) =>
+                                      updateGroupSalePrice(
+                                        key,
+                                        event.target.value,
+                                      )
+                                    }
+                                    className={inputClass}
+                                    placeholder="Ej. 450"
+                                  />
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="mt-3 space-y-3">
+                              {items.map((item) => (
+                                <div
+                                  key={item.inventory_unit_id}
+                                  className="rounded-lg border border-[#EFE7DE] p-3"
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="text-xs font-semibold">
+                                      Unidad #{item.unit_number}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        removeFromCart(item.inventory_unit_id)
+                                      }
+                                      className="rounded p-1 text-[#78909C] hover:bg-red-50 hover:text-[#CC6255]"
+                                      aria-label={`Quitar unidad ${item.unit_number}`}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                  <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.is_wholesale}
+                                      onChange={(event) => {
+                                        const wholesale = event.target.checked;
+                                        updateCartItem(item.inventory_unit_id, {
+                                          is_wholesale: wholesale,
+                                          sale_price_mxn: wholesale
+                                            ? calculateWholesalePrice(
+                                                item.unit_cost_usd,
+                                              )
+                                            : "",
+                                        });
+                                      }}
+                                      className="h-4 w-4 accent-[#E2732D]"
+                                    />
+                                    Aplicar precio de mayoreo
+                                  </label>
+                                  <label
+                                    htmlFor={`price-${item.inventory_unit_id}`}
+                                    className="mb-1 mt-2 block text-xs font-semibold text-[#78909C]"
+                                  >
+                                    Precio de venta (MXN)
+                                  </label>
+                                  <input
+                                    id={`price-${item.inventory_unit_id}`}
+                                    type="text"
+                                    inputMode="decimal"
+                                    autoComplete="off"
+                                    value={item.sale_price_mxn}
+                                    readOnly={item.is_wholesale}
+                                    onChange={(event) =>
+                                      updateCartItem(item.inventory_unit_id, {
+                                        sale_price_mxn: event.target.value,
+                                      })
+                                    }
+                                    className={`${inputClass} py-2.5 ${item.is_wholesale ? "bg-[#FDF9F7] text-[#78909C]" : ""}`}
+                                    placeholder="Ej. 450"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-[#FDF9F7] p-2.5 text-xs">
+                            <div>
+                              <p className="text-[#78909C]">Costo</p>
+                              <p className="mt-0.5 font-semibold">
+                                {money(groupCost)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-[#78909C]">Utilidad est.</p>
+                              <p
+                                className={`mt-0.5 font-semibold ${groupProfit === null ? "text-[#78909C]" : groupProfit >= 0 ? "text-green-700" : "text-red-700"}`}
+                              >
+                                {groupProfit === null
+                                  ? "Pendiente"
+                                  : money(groupProfit)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-[#78909C]">Importe</p>
+                              <p className="mt-0.5 font-bold">
+                                {money(groupSale)}
+                              </p>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1008,8 +1248,10 @@ export default function VentasPage() {
 
                     {periods.map((period) => (
                       <option key={period.id} value={period.id}>
-                        {period.name} —{" "}
-                        {period.status === "open" ? "Abierto" : "En planeación"}
+                        {period.name} —
+                        {period.status === "selling"
+                          ? "Abierto"
+                          : "En planeación"}
                       </option>
                     ))}
                   </select>
@@ -1025,15 +1267,15 @@ export default function VentasPage() {
                   <div>
                     <label className={labelClass}>Anticipo (MXN)</label>
                     <input
-                      type="number"
-                      min="0"
-                      max={total}
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
                       value={initialPayment}
                       onChange={(event) =>
                         setInitialPayment(event.target.value)
                       }
                       className={inputClass}
+                      placeholder="0.00"
                     />
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
@@ -1141,8 +1383,8 @@ export default function VentasPage() {
                     !validPayment ||
                     cart.some(
                       (item) =>
-                        !Number.isFinite(item.sale_price_mxn) ||
-                        item.sale_price_mxn <= 0,
+                        !item.sale_price_mxn.trim() ||
+                        parseAmount(item.sale_price_mxn) <= 0,
                     )
                   }
                   className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#E2732D] px-4 py-3.5 font-bold text-white transition hover:bg-[#CC6255] disabled:cursor-not-allowed disabled:opacity-50"

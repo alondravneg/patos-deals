@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/app/lib/supabase";
+import Link from "next/link";
 import {
   CalendarDays,
   Plus,
@@ -12,6 +13,7 @@ import {
   AlertCircle,
   X,
   ArrowRight,
+  Truck,
 } from "lucide-react";
 
 type OperationPeriod = {
@@ -60,11 +62,19 @@ const statusInfo: Record<string, { label: string; className: string }> = {
     label: "En planeación",
     className: "bg-blue-50 text-blue-700 ring-blue-200",
   },
-  open: {
+  shopping: {
+    label: "En compras",
+    className: "bg-amber-50 text-amber-700 ring-amber-200",
+  },
+  selling: {
     label: "Abierto",
     className: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   },
-  closed: {
+  settling: {
+    label: "En liquidación",
+    className: "bg-violet-50 text-violet-700 ring-violet-200",
+  },
+  finished: {
     label: "Cerrado",
     className: "bg-stone-100 text-stone-600 ring-stone-200",
   },
@@ -236,10 +246,12 @@ export default function PeriodosPage() {
     (period) => period.status === "planning",
   ).length;
 
-  const openCount = periods.filter((period) => period.status === "open").length;
+  const sellingCount = periods.filter(
+    (period) => period.status === "selling",
+  ).length;
 
-  const closedCount = periods.filter(
-    (period) => period.status === "closed",
+  const finishedCount = periods.filter(
+    (period) => period.status === "finished",
   ).length;
 
   return (
@@ -263,18 +275,27 @@ export default function PeriodosPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              setError("");
-              setSuccess("");
-              setShowForm(true);
-            }}
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#0C304F] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#17466B]"
-          >
-            <Plus size={19} />
-            Nuevo periodo
-          </button>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Link
+              href="/admin/entregas"
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-[#DDD4CD] bg-white px-5 py-3 text-sm font-semibold text-[#0C304F] transition hover:bg-[#F3F7FA]"
+            >
+              <Truck size={18} />
+              Entregas
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setSuccess("");
+                setShowForm(true);
+              }}
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#0C304F] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#17466B]"
+            >
+              <Plus size={19} />
+              Nuevo periodo
+            </button>
+          </div>
         </header>
 
         {/* Mensajes */}
@@ -311,15 +332,15 @@ export default function PeriodosPage() {
 
           <SummaryCard
             title="Abiertos"
-            value={String(openCount)}
-            description="Periodos en operación"
+            value={String(sellingCount)}
+            description="Periodos con ventas"
             icon={<CalendarDays size={21} />}
           />
 
           <SummaryCard
             title="Cerrados"
-            value={String(closedCount)}
-            description="Periodos finalizados"
+            value={String(finishedCount)}
+            description="Periodos con entregas completas"
             icon={<CheckCircle2 size={21} />}
           />
         </section>

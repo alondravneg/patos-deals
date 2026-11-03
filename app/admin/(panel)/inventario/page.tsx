@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Filter,
   LoaderCircle,
   Package,
@@ -143,6 +145,8 @@ export default function InventarioPage() {
   const [success, setSuccess] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 9;
 
   const loadInventory = useCallback(
     async (isRefresh = false) => {
@@ -260,6 +264,16 @@ export default function InventarioPage() {
       return haystack.includes(query);
     });
   }, [units, search, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredUnits.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStart =
+    filteredUnits.length === 0 ? 0 : (safeCurrentPage - 1) * pageSize;
+  const paginatedUnits = filteredUnits.slice(pageStart, pageStart + pageSize);
+
+  useEffect(() => {
+    if (currentPage !== safeCurrentPage) setCurrentPage(safeCurrentPage);
+  }, [currentPage, safeCurrentPage]);
 
   async function handleRelease(unit: InventoryUnit) {
     const activeSaleItem = unit.sale_items
@@ -462,11 +476,11 @@ export default function InventarioPage() {
           ].map((card) => (
             <div
               key={card.label}
-              className="rounded-2xl border border-[#EFE7DE] bg-white p-5"
+              className="rounded-xl border border-[#EFE7DE] bg-white px-4 py-3"
             >
-              <p className="text-sm text-[#78909C]">{card.label}</p>
+              <p className="text-xs text-[#78909C]">{card.label}</p>
               <p
-                className={`mt-2 text-3xl font-bold tabular-nums ${card.tone}`}
+                className={`mt-1 text-2xl font-bold tabular-nums ${card.tone}`}
               >
                 {loading ? "—" : card.value}
               </p>
@@ -474,8 +488,8 @@ export default function InventarioPage() {
           ))}
         </section>
 
-        <section className="rounded-2xl border border-[#EFE7DE] bg-white p-5 sm:p-6">
-          <div className="mb-5 flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+        <section className="rounded-2xl border border-[#EFE7DE] bg-white p-4 sm:p-5">
+          <div className="mb-4 flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
             <div>
               <h2 className="font-bold">Unidades de inventario</h2>
               <p className="mt-1 text-sm text-[#78909C]">
@@ -487,27 +501,31 @@ export default function InventarioPage() {
             <div className="flex flex-col gap-3 sm:flex-row">
               <div className="relative sm:w-72">
                 <Search
-                  size={17}
+                  size={16}
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-[#78909C]"
                 />
                 <input
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setCurrentPage(1);
+                  }}
                   placeholder="Buscar producto, cliente o folio..."
-                  className={`${inputClass} pl-10`}
+                  className={`${inputClass} py-2.5 pl-9`}
                 />
               </div>
               <div className="relative sm:w-52">
                 <Filter
-                  size={16}
+                  size={15}
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-[#78909C]"
                 />
                 <select
                   value={statusFilter}
-                  onChange={(event) =>
-                    setStatusFilter(event.target.value as StatusFilter)
-                  }
-                  className={`${inputClass} pl-9`}
+                  onChange={(event) => {
+                    setStatusFilter(event.target.value as StatusFilter);
+                    setCurrentPage(1);
+                  }}
+                  className={`${inputClass} py-2.5 pl-9`}
                 >
                   <option value="all">Todos los estados</option>
                   {Object.entries(statusLabels).map(([value, label]) => (
@@ -535,175 +553,234 @@ export default function InventarioPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {filteredUnits.map((unit) => {
-                const item = unit.purchase_items;
-                const activeSaleItem = unit.sale_items
-                  ?.filter(
-                    (saleItem) => !saleItem.released_at && saleItem.sales,
-                  )
-                  .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-                const retail =
-                  unit.retail_price_mxn ?? item?.suggested_retail_price_mxn;
-                const wholesale =
-                  unit.wholesale_price_mxn ?? item?.wholesale_price_mxn;
-                const canRelease =
-                  unit.status === "reserved" && Boolean(activeSaleItem?.sales);
+            <>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[#78909C]">
+                <span>
+                  Mostrando {pageStart + 1}–
+                  {Math.min(pageStart + pageSize, filteredUnits.length)} de{" "}
+                  {filteredUnits.length} unidades
+                </span>
+                <span>{pageSize} por página</span>
+              </div>
 
-                return (
-                  <article
-                    key={unit.id}
-                    className="rounded-xl border border-[#EFE7DE] p-4 sm:p-5"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h3 className="truncate font-semibold">
-                          {item?.product_name ?? "Producto sin nombre"}
-                        </h3>
-                        <p className="mt-1 text-xs text-[#78909C]">
-                          {[item?.brand, item?.model, item?.sku]
-                            .filter(Boolean)
-                            .join(" · ") || "Sin marca, modelo o SKU"}
-                        </p>
-                        <p className="mt-2 text-sm font-medium">
-                          Unidad #{unit.unit_number}
-                        </p>
-                      </div>
-                      <span
-                        className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold ${statusClasses[unit.status] ?? "bg-slate-100 text-slate-700"}`}
-                      >
-                        {statusLabels[unit.status] ?? unit.status}
-                      </span>
-                    </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {paginatedUnits.map((unit) => {
+                  const item = unit.purchase_items;
+                  const activeSaleItem = unit.sale_items
+                    ?.filter(
+                      (saleItem) => !saleItem.released_at && saleItem.sales,
+                    )
+                    .sort((a, b) =>
+                      b.created_at.localeCompare(a.created_at),
+                    )[0];
+                  const retail =
+                    unit.retail_price_mxn ?? item?.suggested_retail_price_mxn;
+                  const wholesale =
+                    unit.wholesale_price_mxn ?? item?.wholesale_price_mxn;
+                  const canRelease =
+                    unit.status === "reserved" &&
+                    Boolean(activeSaleItem?.sales);
+                  const actionDisabled =
+                    releasingId !== null || changingUsageId !== null;
 
-                    {(item?.size || item?.color) && (
-                      <p className="mt-2 text-xs text-[#78909C]">
-                        {[
-                          item?.size && `Talla ${item.size}`,
-                          item?.color && `Color ${item.color}`,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </p>
-                    )}
-
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                      <div className="rounded-lg bg-[#FDF9F7] p-3">
-                        <p className="text-xs text-[#78909C]">Costo original</p>
-                        <p className="mt-1 font-semibold">
-                          {money(item?.unit_cost_mxn)}
-                        </p>
-                        <p className="text-xs text-[#78909C]">
-                          {usd(item?.unit_cost_usd)} USD
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-[#FDF9F7] p-3">
-                        <p className="text-xs text-[#78909C]">Precios</p>
-                        <p className="mt-1 font-semibold">
-                          Menudeo:{" "}
-                          {retail == null ? "Sin precio" : money(retail)}
-                        </p>
-                        <p className="text-xs text-[#78909C]">
-                          Mayoreo:{" "}
-                          {wholesale == null ? "Sin precio" : money(wholesale)}
-                        </p>
-                      </div>
-                    </div>
-
-                    {unit.status === "reserved" && (
-                      <div className="mt-4 rounded-lg border border-amber-100 bg-amber-50/60 p-3 text-sm">
-                        <div className="flex items-center gap-2 font-semibold text-[#0C304F]">
-                          <UserRound size={16} />{" "}
-                          {unit.customers?.full_name ?? "Cliente no disponible"}
-                        </div>
-                        {activeSaleItem?.sales ? (
-                          <div className="mt-1 flex items-center gap-2 text-xs text-[#78909C]">
-                            <ShoppingCart size={14} /> Venta{" "}
-                            {activeSaleItem.sales.folio} ·{" "}
-                            {money(activeSaleItem.sale_price_mxn)}
-                          </div>
-                        ) : (
-                          <p className="mt-1 text-xs text-red-700">
-                            No se encontró una línea de venta activa. Requiere
-                            revisión manual.
+                  return (
+                    <article
+                      key={unit.id}
+                      className="flex h-full min-w-0 flex-col rounded-xl border border-[#EFE7DE] bg-white p-3 transition hover:border-[#D8C9BA]"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-sm font-semibold leading-5">
+                            {item?.product_name ?? "Producto sin nombre"}
+                          </h3>
+                          <p className="mt-0.5 truncate text-[11px] text-[#78909C]">
+                            {[item?.brand, item?.model, item?.sku]
+                              .filter(Boolean)
+                              .join(" · ") || "Sin marca, modelo o SKU"}
                           </p>
+                          <p className="mt-1 text-xs font-medium">
+                            Unidad #{unit.unit_number}
+                          </p>
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${statusClasses[unit.status] ?? "bg-slate-100 text-slate-700"}`}
+                        >
+                          {statusLabels[unit.status] ?? unit.status}
+                        </span>
+                      </div>
+
+                      {(item?.size || item?.color) && (
+                        <p className="mt-1 text-[11px] text-[#78909C]">
+                          {[
+                            item?.size && `Talla ${item.size}`,
+                            item?.color && `Color ${item.color}`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      )}
+
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-lg bg-[#FDF9F7] px-2.5 py-2">
+                          <p className="text-[10px] text-[#78909C]">
+                            Costo original
+                          </p>
+                          <p className="mt-0.5 font-semibold">
+                            {money(item?.unit_cost_mxn)}
+                          </p>
+                          <p className="text-[10px] text-[#78909C]">
+                            {usd(item?.unit_cost_usd)} USD
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-[#FDF9F7] px-2.5 py-2">
+                          <p className="text-[10px] text-[#78909C]">Precios</p>
+                          <p className="mt-0.5 truncate font-semibold">
+                            Menudeo:{" "}
+                            {retail == null ? "Sin precio" : money(retail)}
+                          </p>
+                          <p className="truncate text-[10px] text-[#78909C]">
+                            Mayoreo:{" "}
+                            {wholesale == null
+                              ? "Sin precio"
+                              : money(wholesale)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {unit.status === "reserved" && (
+                        <div className="mt-2 flex min-w-0 items-center gap-2 rounded-lg border border-amber-100 bg-amber-50/60 px-2.5 py-2 text-xs">
+                          <UserRound size={14} className="shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-semibold text-[#0C304F]">
+                              {unit.customers?.full_name ??
+                                "Cliente no disponible"}
+                            </p>
+                            {activeSaleItem?.sales ? (
+                              <p className="truncate text-[10px] text-[#78909C]">
+                                Venta {activeSaleItem.sales.folio} ·{" "}
+                                {money(activeSaleItem.sale_price_mxn)}
+                              </p>
+                            ) : (
+                              <p className="text-[10px] text-red-700">
+                                Sin línea de venta activa; requiere revisión.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {(unit.status === "available" ||
+                        unit.status === "personal_use") && (
+                        <p className="mt-2 text-[10px] text-[#78909C]">
+                          Sin cliente asignado ·{" "}
+                          {unit.status === "available"
+                            ? "Disponible para venta"
+                            : "Apartado para uso personal"}
+                        </p>
+                      )}
+
+                      <div className="mt-auto pt-2">
+                        {canRelease && (
+                          <button
+                            type="button"
+                            onClick={() => void handleRelease(unit)}
+                            disabled={actionDisabled}
+                            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#CC6255]/40 px-2.5 py-2 text-xs font-semibold text-[#CC6255] transition hover:bg-[#CC6255] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {releasingId === unit.id ? (
+                              <LoaderCircle
+                                size={14}
+                                className="animate-spin"
+                              />
+                            ) : (
+                              <UnlockKeyhole size={14} />
+                            )}
+                            {releasingId === unit.id
+                              ? "Liberando..."
+                              : "Liberar producto"}
+                          </button>
+                        )}
+
+                        {unit.status === "available" && (
+                          <button
+                            type="button"
+                            onClick={() => void handleUsageStatusChange(unit)}
+                            disabled={actionDisabled}
+                            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 px-2.5 py-2 text-xs font-semibold text-violet-700 transition hover:bg-violet-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {changingUsageId === unit.id ? (
+                              <LoaderCircle
+                                size={14}
+                                className="animate-spin"
+                              />
+                            ) : (
+                              <UserRound size={14} />
+                            )}
+                            {changingUsageId === unit.id
+                              ? "Actualizando..."
+                              : "Marcar uso personal"}
+                          </button>
+                        )}
+
+                        {unit.status === "personal_use" && (
+                          <button
+                            type="button"
+                            onClick={() => void handleUsageStatusChange(unit)}
+                            disabled={actionDisabled}
+                            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-green-200 px-2.5 py-2 text-xs font-semibold text-green-700 transition hover:bg-green-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {changingUsageId === unit.id ? (
+                              <LoaderCircle
+                                size={14}
+                                className="animate-spin"
+                              />
+                            ) : (
+                              <RotateCcw size={14} />
+                            )}
+                            {changingUsageId === unit.id
+                              ? "Actualizando..."
+                              : "Regresar a disponibles"}
+                          </button>
                         )}
                       </div>
-                    )}
+                    </article>
+                  );
+                })}
+              </div>
 
-                    {(unit.status === "available" ||
-                      unit.status === "personal_use") && (
-                      <p className="mt-4 rounded-lg bg-[#FDF9F7] px-3 py-2 text-xs text-[#78909C]">
-                        Sin cliente asignado ·{" "}
-                        {unit.status === "available"
-                          ? "Disponible para venta"
-                          : "Apartado para uso personal"}
-                      </p>
-                    )}
-
-                    {canRelease && (
-                      <button
-                        type="button"
-                        onClick={() => void handleRelease(unit)}
-                        disabled={
-                          releasingId !== null || changingUsageId !== null
-                        }
-                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#CC6255]/40 px-3 py-2.5 text-sm font-semibold text-[#CC6255] transition hover:bg-[#CC6255] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {releasingId === unit.id ? (
-                          <LoaderCircle size={17} className="animate-spin" />
-                        ) : (
-                          <UnlockKeyhole size={17} />
-                        )}
-                        {releasingId === unit.id
-                          ? "Liberando unidad..."
-                          : "Liberar producto"}
-                      </button>
-                    )}
-
-                    {unit.status === "available" && (
-                      <button
-                        type="button"
-                        onClick={() => void handleUsageStatusChange(unit)}
-                        disabled={
-                          changingUsageId !== null || releasingId !== null
-                        }
-                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-200 px-3 py-2.5 text-sm font-semibold text-violet-700 transition hover:bg-violet-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {changingUsageId === unit.id ? (
-                          <LoaderCircle size={17} className="animate-spin" />
-                        ) : (
-                          <UserRound size={17} />
-                        )}
-                        {changingUsageId === unit.id
-                          ? "Actualizando..."
-                          : "Marcar uso personal"}
-                      </button>
-                    )}
-
-                    {unit.status === "personal_use" && (
-                      <button
-                        type="button"
-                        onClick={() => void handleUsageStatusChange(unit)}
-                        disabled={
-                          changingUsageId !== null || releasingId !== null
-                        }
-                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-green-200 px-3 py-2.5 text-sm font-semibold text-green-700 transition hover:bg-green-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {changingUsageId === unit.id ? (
-                          <LoaderCircle size={17} className="animate-spin" />
-                        ) : (
-                          <RotateCcw size={17} />
-                        )}
-                        {changingUsageId === unit.id
-                          ? "Actualizando..."
-                          : "Regresar a disponibles"}
-                      </button>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
+              {totalPages > 1 && (
+                <nav
+                  aria-label="Paginación de inventario"
+                  className="mt-5 flex flex-col gap-3 border-t border-[#EFE7DE] pt-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <p className="text-xs text-[#78909C]">
+                    Página {safeCurrentPage} de {totalPages}
+                  </p>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage((page) => Math.max(1, page - 1))
+                      }
+                      disabled={safeCurrentPage === 1}
+                      className="inline-flex items-center gap-1 rounded-lg border border-[#EFE7DE] px-3 py-2 text-xs font-semibold text-[#0C304F] transition hover:border-[#36709E] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ChevronLeft size={15} /> Anterior
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage((page) => Math.min(totalPages, page + 1))
+                      }
+                      disabled={safeCurrentPage === totalPages}
+                      className="inline-flex items-center gap-1 rounded-lg border border-[#EFE7DE] px-3 py-2 text-xs font-semibold text-[#0C304F] transition hover:border-[#36709E] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Siguiente <ChevronRight size={15} />
+                    </button>
+                  </div>
+                </nav>
+              )}
+            </>
           )}
         </section>
 
