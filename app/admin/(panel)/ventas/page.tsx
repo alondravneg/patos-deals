@@ -853,26 +853,6 @@ export default function VentasPage() {
                               Disponible
                             </span>
                           </div>
-
-                          <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                            <div className="rounded-lg bg-[#FDF9F7] p-2">
-                              <p className="text-xs text-[#78909C]">Menudeo</p>
-                              <p className="mt-1 font-semibold">
-                                {product.retail_price_mxn != null
-                                  ? money(Number(product.retail_price_mxn))
-                                  : "Sin precio"}
-                              </p>
-                            </div>
-                            <div className="rounded-lg bg-[#FDF9F7] p-2">
-                              <p className="text-xs text-[#78909C]">Mayoreo</p>
-                              <p className="mt-1 font-semibold">
-                                {product.wholesale_price_mxn != null
-                                  ? money(Number(product.wholesale_price_mxn))
-                                  : "Sin precio"}
-                              </p>
-                            </div>
-                          </div>
-
                           <button
                             type="button"
                             disabled={alreadyAdded}

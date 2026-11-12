@@ -115,6 +115,7 @@ type AppliedPayment = {
 
 type SaleLedger = {
   sale: Sale;
+  periodName: string | null;
   total: number;
   paid: number;
   balance: number;
@@ -488,7 +489,7 @@ export default function TicketsPage() {
     const customerById = new Map(
       customers.map((customer) => [customer.id, customer]),
     );
-    const saleById = new Map(sales.map((sale) => [sale.id, sale]));
+    const periodById = new Map(periods.map((item) => [item.id, item]));
     const paymentById = new Map(
       payments.map((payment) => [payment.id, payment]),
     );
@@ -533,14 +534,21 @@ export default function TicketsPage() {
       currentPeriodSales.map((sale) => sale.id),
     );
 
-    // Los adeudos anteriores son ventas previas al inicio del periodo y siguen vigentes
-    // aunque hayan recibido abonos después de la fecha final programada.
-    const previousSales = sales.filter(
-      (sale) =>
-        !currentPeriodSaleIds.has(sale.id) &&
-        sale.sale_date < period.start_date &&
-        sale.sale_date <= cutoffDate,
-    );
+    // Los adeudos anteriores se determinan primero por el periodo al que pertenece la venta,
+    // no solamente por sale_date. Esto evita perder adeudos de operaciones anteriores cuando
+    // una venta se capturó tarde o su fecha no coincide con el rango del periodo.
+    // Para ventas antiguas sin periodo (o con un periodo que ya no está visible), se usa la fecha.
+    const previousSales = sales.filter((sale) => {
+      if (currentPeriodSaleIds.has(sale.id) || sale.sale_date > cutoffDate)
+        return false;
+
+      if (sale.operation_period_id) {
+        const salePeriod = periodById.get(sale.operation_period_id);
+        if (salePeriod) return salePeriod.start_date < period.start_date;
+      }
+
+      return sale.sale_date < period.start_date;
+    });
 
     const relevantSales = [...previousSales, ...currentPeriodSales];
     const activeSaleIds = new Set(relevantSales.map((sale) => sale.id));
@@ -589,6 +597,9 @@ export default function TicketsPage() {
       const paid = salePayments.reduce((sum, item) => sum + item.amount, 0);
       ledgerBySale.set(sale.id, {
         sale,
+        periodName: sale.operation_period_id
+          ? (periodById.get(sale.operation_period_id)?.name ?? null)
+          : null,
         total,
         paid,
         balance: Math.max(total - paid, 0),
@@ -759,6 +770,7 @@ export default function TicketsPage() {
     );
   }, [
     period,
+    periods,
     customers,
     sales,
     saleItems,
@@ -786,14 +798,18 @@ export default function TicketsPage() {
         })
         .map((sale) => sale.id),
     );
+    const periodById = new Map(periods.map((item) => [item.id, item]));
     const previousSaleIds = new Set(
       sales
-        .filter(
-          (sale) =>
-            !periodSaleIds.has(sale.id) &&
-            sale.sale_date < period.start_date &&
-            sale.sale_date <= todayLocal(),
-        )
+        .filter((sale) => {
+          if (periodSaleIds.has(sale.id) || sale.sale_date > todayLocal())
+            return false;
+          if (sale.operation_period_id) {
+            const salePeriod = periodById.get(sale.operation_period_id);
+            if (salePeriod) return salePeriod.start_date < period.start_date;
+          }
+          return sale.sale_date < period.start_date;
+        })
         .map((sale) => sale.id),
     );
     return {
@@ -802,7 +818,7 @@ export default function TicketsPage() {
         .length,
       previousSales: previousSaleIds.size,
     };
-  }, [period, sales, saleItems]);
+  }, [period, periods, sales, saleItems]);
 
   const filteredTickets = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -1153,7 +1169,6 @@ export default function TicketsPage() {
           left: 50%;
           top: 52%;
           transform: translate(-50%, -50%);
-          opacity: 0.17;
           z-index: 0;
           pointer-events: none;
           mix-blend-mode: multiply;
@@ -1255,8 +1270,8 @@ export default function TicketsPage() {
               Tickets de clientes
             </h1>
             <p className="mt-2 max-w-2xl text-sm text-[#78909C]">
-              Genera estados de cuenta por cliente con compras del periodo,
-              saldos anteriores y anticipos registrados.
+              Genera estados de cuenta por cliente con adeudos de periodos
+              anteriores, compras actuales y abonos aplicados.
             </p>
           </div>
           <button
@@ -1713,7 +1728,7 @@ function TicketPaper({
             <section className="ticket-paper-section border-b border-dotted border-[#bdb8b1] py-4">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <h4 className="text-xs font-extrabold uppercase tracking-[0.13em] text-[#0C304F]">
-                  Saldo pendiente anterior
+                  Adeudos de periodos anteriores
                 </h4>
                 <span className="shrink-0 text-sm font-extrabold tabular-nums text-[#CC6255]">
                   {money(ticket.previousBalance)}
@@ -1733,13 +1748,15 @@ function TicketPaper({
                     <div className="flex items-start justify-between gap-3 px-3 py-2.5">
                       <div className="min-w-0">
                         <p className="font-bold text-[#34312e]">
-                          Pendiente · {formatDate(sale.sale.sale_date)}
+                          {sale.periodName ?? "Venta anterior"}
                         </p>
                         <p className="mt-0.5 text-[10px] text-[#8b8781]">
-                          {sale.sale.folio ?? "Venta anterior"}
+                          {formatDate(sale.sale.sale_date) ??
+                            "Operación anterior"}{" "}
+                          · Importe original
                         </p>
                       </div>
-                      <span className="shrink-0 font-semibold tabular-nums text-[#34312e]">
+                      <span className="shrink-0 font-semibold tabular-nums text-[#8b8781]">
                         {money(sale.total)}
                       </span>
                     </div>
@@ -1760,7 +1777,7 @@ function TicketPaper({
                     ))}
 
                     <div className="flex items-center justify-between gap-3 border-t border-dotted border-[#c6c2bc] px-3 py-2 font-bold">
-                      <span>Pendiente actualizado</span>
+                      <span>Saldo pendiente de esta venta</span>
                       <span className="tabular-nums">
                         {money(sale.balance)}
                       </span>
@@ -1855,17 +1872,65 @@ function TicketPaper({
             )}
           </section>
 
-          <section className="ticket-paper-section ml-auto mt-3 w-full max-w-[285px] border border-dotted border-[#aaa7a1] bg-white/90 text-xs sm:text-sm">
+          {ticket.advances.length > 0 && (
+            <section className="ticket-paper-section border-t border-dotted border-[#bdb8b1] py-3">
+              <div className="mb-2 flex items-center justify-between gap-3 text-xs font-extrabold">
+                <span className="uppercase tracking-wide text-[#0C304F]">
+                  Anticipos / abonos
+                </span>
+                <span className="shrink-0 tabular-nums text-[#18804a]">
+                  {money(ticket.advancesTotal)}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {ticket.advances.map((advance) => (
+                  <div
+                    key={advance.id}
+                    className="flex justify-between gap-3 text-xs text-[#18804a]"
+                  >
+                    <span>
+                      Abono {formatDate(advance.date)} · {advance.method}
+                    </span>
+                    <span className="shrink-0 font-bold tabular-nums">
+                      − {money(advance.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="ticket-paper-section ml-auto mt-3 w-full max-w-[315px] border border-dotted border-[#aaa7a1] bg-white/90 text-xs sm:text-sm">
+            {ticket.previousBalance > 0.009 && (
+              <div className="flex justify-between gap-4 border-b border-dotted border-[#aaa7a1] px-3 py-2.5">
+                <span className="font-bold tracking-wide">
+                  ADEUDOS ANTERIORES
+                </span>
+                <span className="tabular-nums">
+                  {money(ticket.previousBalance)}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between gap-4 border-b border-dotted border-[#aaa7a1] px-3 py-2.5">
+              <span className="font-bold tracking-wide">
+                COMPRAS DEL PERIODO
+              </span>
+              <span className="tabular-nums">
+                {money(ticket.purchasesTotal)}
+              </span>
+            </div>
+            <div className="flex justify-between gap-4 border-b border-dotted border-[#aaa7a1] bg-[#f7f5f2] px-3 py-2.5">
               <span className="font-extrabold tracking-wide">TOTAL</span>
               <span className="font-semibold tabular-nums">
                 {money(ticket.total)}
               </span>
             </div>
             <div className="flex justify-between gap-4 border-b border-dotted border-[#aaa7a1] px-3 py-2.5">
-              <span className="font-extrabold tracking-wide">ANTICIPO</span>
-              <span className="tabular-nums">
-                {money(ticket.advancesTotal)}
+              <span className="font-extrabold tracking-wide">
+                ANTICIPOS / ABONOS
+              </span>
+              <span className="tabular-nums text-[#18804a]">
+                − {money(ticket.advancesTotal)}
               </span>
             </div>
             <div className="flex justify-between gap-4 bg-[#f8eee9] px-3 py-3 text-sm sm:text-base">
