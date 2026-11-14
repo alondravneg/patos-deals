@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
+  Award,
   CheckCircle2,
   CircleDollarSign,
   LoaderCircle,
@@ -64,6 +65,11 @@ type SaleResult = {
   discount_type?: string;
   discount_value?: number;
   discount_amount_mxn?: number;
+  loyalty_stamp_added?: boolean;
+  loyalty_cycle_completed?: boolean;
+  loyalty_reward_redeemed?: boolean;
+  loyalty_current_stamps?: number;
+  loyalty_rewards_pending?: number;
 };
 
 type OperationPeriod = {
@@ -72,6 +78,16 @@ type OperationPeriod = {
   start_date: string;
   end_date: string | null;
   status: "planning" | "selling" | "finished";
+};
+
+type LoyaltyAccount = {
+  customer_id: string;
+  current_stamps: number;
+};
+
+type LoyaltyReward = {
+  customer_id: string;
+  status: "pending" | "redeemed";
 };
 
 const money = (value: number) =>
@@ -115,6 +131,8 @@ export default function VentasPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [inventory, setInventory] = useState<InventoryProduct[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [loyaltyAccounts, setLoyaltyAccounts] = useState<LoyaltyAccount[]>([]);
+  const [loyaltyRewards, setLoyaltyRewards] = useState<LoyaltyReward[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -133,6 +151,7 @@ export default function VentasPage() {
     "percentage",
   );
   const [discountValue, setDiscountValue] = useState("");
+  const [redeemLoyalty, setRedeemLoyalty] = useState(false);
   const [separatePrices, setSeparatePrices] = useState<Record<string, boolean>>(
     {},
   );
@@ -154,24 +173,29 @@ export default function VentasPage() {
     setError("");
 
     try {
-      const [customersResult, periodsResult, inventoryResult] =
-        await Promise.all([
-          supabase
-            .from("customers")
-            .select("id, full_name, phone, email, active")
-            .eq("active", true)
-            .order("full_name"),
+      const [
+        customersResult,
+        periodsResult,
+        inventoryResult,
+        loyaltyAccountsResult,
+        loyaltyRewardsResult,
+      ] = await Promise.all([
+        supabase
+          .from("customers")
+          .select("id, full_name, phone, email, active")
+          .eq("active", true)
+          .order("full_name"),
 
-          supabase
-            .from("operation_periods")
-            .select("id, name, start_date, end_date, status")
-            .in("status", ["planning", "selling"])
-            .order("start_date", { ascending: false }),
+        supabase
+          .from("operation_periods")
+          .select("id, name, start_date, end_date, status")
+          .in("status", ["planning", "selling"])
+          .order("start_date", { ascending: false }),
 
-          supabase
-            .from("inventory_units")
-            .select(
-              `
+        supabase
+          .from("inventory_units")
+          .select(
+            `
               id,
               unit_number,
               status,
@@ -185,20 +209,33 @@ export default function VentasPage() {
                 unit_cost_usd
               )
             `,
-            )
-            .eq("status", "available")
-            .order("unit_number"),
-        ]);
+          )
+          .eq("status", "available")
+          .order("unit_number"),
+
+        supabase.from("loyalty_accounts").select("customer_id, current_stamps"),
+
+        supabase
+          .from("loyalty_rewards")
+          .select("customer_id, status")
+          .eq("status", "pending"),
+      ]);
 
       if (customersResult.error) throw customersResult.error;
       if (periodsResult.error) throw periodsResult.error;
       if (inventoryResult.error) throw inventoryResult.error;
+      if (loyaltyAccountsResult.error) throw loyaltyAccountsResult.error;
+      if (loyaltyRewardsResult.error) throw loyaltyRewardsResult.error;
 
       setCustomers((customersResult.data ?? []) as Customer[]);
       setPeriods((periodsResult.data ?? []) as OperationPeriod[]);
       setInventory(
         (inventoryResult.data ?? []) as unknown as InventoryProduct[],
       );
+      setLoyaltyAccounts(
+        (loyaltyAccountsResult.data ?? []) as LoyaltyAccount[],
+      );
+      setLoyaltyRewards((loyaltyRewardsResult.data ?? []) as LoyaltyReward[]);
       setCurrentProductPage(1);
     } catch (err) {
       console.error("Error cargando ventas:", err);
@@ -220,21 +257,38 @@ export default function VentasPage() {
         100,
     ) / 100;
   const discountValueNumber = parseAmount(discountValue);
+  const selectedCustomerPendingRewards = selectedCustomer
+    ? loyaltyRewards.filter(
+        (reward) =>
+          reward.customer_id === selectedCustomer.id &&
+          reward.status === "pending",
+      ).length
+    : 0;
+  const selectedCustomerStamps = selectedCustomer
+    ? Number(
+        loyaltyAccounts.find(
+          (account) => account.customer_id === selectedCustomer.id,
+        )?.current_stamps ?? 0,
+      )
+    : 0;
   const discountAmount = Math.min(
     subtotal,
     Math.round(
-      (discountType === "percentage"
-        ? (subtotal * discountValueNumber) / 100
-        : discountValueNumber) * 100,
+      (redeemLoyalty
+        ? subtotal * 0.1
+        : discountType === "percentage"
+          ? (subtotal * discountValueNumber) / 100
+          : discountValueNumber) * 100,
     ) / 100,
   );
-  const discountValid =
-    isValidAmountInput(discountValue) &&
-    discountValueNumber >= 0 &&
-    (discountValueNumber === 0 ||
-      (discountType === "percentage"
-        ? discountValueNumber < 100
-        : discountValueNumber < subtotal));
+  const discountValid = redeemLoyalty
+    ? selectedCustomerPendingRewards > 0
+    : isValidAmountInput(discountValue) &&
+      discountValueNumber >= 0 &&
+      (discountValueNumber === 0 ||
+        (discountType === "percentage"
+          ? discountValueNumber < 100
+          : discountValueNumber < subtotal));
   const total = Math.max(
     Math.round((subtotal - discountAmount) * 100) / 100,
     0,
@@ -469,6 +523,7 @@ export default function VentasPage() {
       );
 
       setSelectedCustomer(customer);
+      setRedeemLoyalty(false);
       setCustomerSearch("");
       setShowNewCustomer(false);
       setNewCustomerName("");
@@ -536,7 +591,7 @@ export default function VentasPage() {
 
     try {
       const { data, error: rpcError } = await supabase.rpc(
-        "create_sale_with_discount",
+        "create_sale_with_loyalty",
         {
           p_customer_id: selectedCustomer.id,
           p_items: cart.map((item) => ({
@@ -549,8 +604,13 @@ export default function VentasPage() {
           p_payment_reference: paymentReference.trim() || null,
           p_notes: notes.trim() || null,
           p_operation_period_id: selectedPeriodId,
-          p_discount_type: discountValueNumber > 0 ? discountType : "none",
-          p_discount_value: discountValueNumber,
+          p_discount_type: redeemLoyalty
+            ? "none"
+            : discountValueNumber > 0
+              ? discountType
+              : "none",
+          p_discount_value: redeemLoyalty ? 0 : discountValueNumber,
+          p_redeem_loyalty_reward: redeemLoyalty,
         },
       );
 
@@ -570,6 +630,7 @@ export default function VentasPage() {
       setInitialPayment("");
       setDiscountType("percentage");
       setDiscountValue("");
+      setRedeemLoyalty(false);
       setSeparatePrices({});
       setPaymentMethod("transfer");
       setPaymentReference("");
@@ -650,6 +711,21 @@ export default function VentasPage() {
                 <p className="mt-1 text-sm text-green-800">
                   Folio: <strong>{success.folio}</strong>
                 </p>
+                {(success.loyalty_reward_redeemed ||
+                  success.loyalty_stamp_added) && (
+                  <div className="mt-3 rounded-xl border border-green-200 bg-white/80 p-3 text-sm text-green-900">
+                    {success.loyalty_reward_redeemed && (
+                      <p>Se canjeó una recompensa Cuackback del 10%.</p>
+                    )}
+                    {success.loyalty_stamp_added && (
+                      <p>
+                        {success.loyalty_cycle_completed
+                          ? "¡Ciclo Cuackback completado! Se agregó una nueva recompensa del 10%."
+                          : `Se agregó un sello Cuackback (${Number(success.loyalty_current_stamps ?? 0)}/6).`}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
                   <div className="rounded-xl bg-white/80 p-3">
@@ -747,7 +823,10 @@ export default function VentasPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setSelectedCustomer(null)}
+                      onClick={() => {
+                        setSelectedCustomer(null);
+                        setRedeemLoyalty(false);
+                      }}
                       className="rounded-lg p-2 text-[#78909C] hover:bg-white hover:text-[#CC6255]"
                       aria-label="Cambiar cliente"
                     >
@@ -802,6 +881,7 @@ export default function VentasPage() {
                               type="button"
                               onClick={() => {
                                 setSelectedCustomer(customer);
+                                setRedeemLoyalty(false);
                                 setCustomerSearch("");
                               }}
                               className="flex w-full items-center justify-between gap-3 p-3 text-left transition hover:bg-[#FDF9F7]"
@@ -1390,21 +1470,70 @@ export default function VentasPage() {
                     <span className="font-semibold">{money(subtotal)}</span>
                   </div>
 
+                  {selectedCustomer && (
+                    <div className="rounded-xl border border-[#E7D5B8] bg-[#FFF8EA] p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5">
+                          <div className="rounded-lg bg-[#F2E4C9] p-2 text-[#9A6A25]">
+                            <Award size={18} />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-[#62451F]">
+                              Cuackback · Recompensa 10% OFF
+                            </p>
+                            <p className="mt-0.5 text-xs text-[#8A7558]">
+                              {selectedCustomerPendingRewards > 0
+                                ? `${selectedCustomerPendingRewards} recompensa(s) pendiente(s) · ${selectedCustomerStamps}/6 sellos del nuevo ciclo.`
+                                : `Sin recompensas pendientes · ${selectedCustomerStamps}/6 sellos acumulados.`}
+                            </p>
+                          </div>
+                        </div>
+                        {selectedCustomerPendingRewards > 0 && (
+                          <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs font-bold text-[#62451F]">
+                            <input
+                              type="checkbox"
+                              checked={redeemLoyalty}
+                              onChange={(event) => {
+                                setRedeemLoyalty(event.target.checked);
+                                if (event.target.checked) {
+                                  setDiscountType("percentage");
+                                  setDiscountValue("");
+                                }
+                              }}
+                              disabled={saving || cart.length === 0}
+                              className="h-4 w-4 cursor-pointer accent-[#B27A2C]"
+                            />
+                            Canjear
+                          </label>
+                        )}
+                      </div>
+                      {redeemLoyalty && (
+                        <p className="mt-2 rounded-lg bg-white/80 px-3 py-2 text-xs font-semibold text-[#7A5524]">
+                          Se aplicará 10% de descuento y se consumirá una
+                          recompensa cuando la venta se registre correctamente.
+                          No se combina con otro descuento.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-[minmax(0,1fr)_minmax(120px,0.85fr)] gap-3">
                     <div>
                       <label htmlFor="discount-type" className={labelClass}>
-                        Descuento sobre la venta
+                        {redeemLoyalty
+                          ? "Descuento Cuackback"
+                          : "Descuento sobre la venta"}
                       </label>
                       <select
                         id="discount-type"
-                        value={discountType}
+                        value={redeemLoyalty ? "percentage" : discountType}
                         onChange={(event) =>
                           setDiscountType(
                             event.target.value as "percentage" | "fixed",
                           )
                         }
                         className={inputClass}
-                        disabled={saving || cart.length === 0}
+                        disabled={saving || cart.length === 0 || redeemLoyalty}
                       >
                         <option value="percentage">Porcentaje (%)</option>
                         <option value="fixed">Cantidad fija (MXN)</option>
@@ -1412,7 +1541,7 @@ export default function VentasPage() {
                     </div>
                     <div>
                       <label htmlFor="discount-value" className={labelClass}>
-                        {discountType === "percentage"
+                        {redeemLoyalty || discountType === "percentage"
                           ? "Porcentaje"
                           : "Importe (MXN)"}
                       </label>
@@ -1421,15 +1550,15 @@ export default function VentasPage() {
                         type="text"
                         inputMode="decimal"
                         autoComplete="off"
-                        value={discountValue}
+                        value={redeemLoyalty ? "10" : discountValue}
                         onChange={(event) => {
                           if (isValidAmountInput(event.target.value)) {
                             setDiscountValue(event.target.value);
                           }
                         }}
                         className={inputClass}
-                        placeholder="0"
-                        disabled={saving || cart.length === 0}
+                        placeholder={redeemLoyalty ? "10" : "0"}
+                        disabled={saving || cart.length === 0 || redeemLoyalty}
                       />
                     </div>
                   </div>
@@ -1443,7 +1572,11 @@ export default function VentasPage() {
                   )}
 
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-[#78909C]">Descuento aplicado</span>
+                    <span className="text-[#78909C]">
+                      {redeemLoyalty
+                        ? "Recompensa Cuackback (10%)"
+                        : "Descuento aplicado"}
+                    </span>
                     <span className="font-semibold text-[#CC6255]">
                       − {money(discountAmount)}
                     </span>

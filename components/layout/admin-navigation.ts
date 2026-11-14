@@ -1,4 +1,5 @@
 import {
+  Award,
   BarChart3,
   CalendarDays,
   ClipboardList,
@@ -86,6 +87,13 @@ export const adminNavigation: AdminNavGroup[] = [
         href: "/admin/tickets",
         description: "Genera y comparte comprobantes visuales por cliente.",
         icon: FileImage,
+      },
+      {
+        label: "Cuackback · Lealtad",
+        href: "/admin/cuackback",
+        description:
+          "Consulta tarjetas, sellos, recompensas pendientes y canjes históricos.",
+        icon: Award,
       },
     ],
   },
