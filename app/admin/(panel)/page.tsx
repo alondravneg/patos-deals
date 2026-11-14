@@ -51,38 +51,6 @@ const sections = [
 export default function AdminPage() {
   return (
     <main className="min-h-screen bg-background">
-      {/* Barra superior */}
-      <header className="border-b border-border bg-surface">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4 sm:px-8 lg:px-12">
-          <Link
-            href="/admin"
-            aria-label="Patos Deals, inicio del panel"
-            className="relative block h-11 w-44 shrink-0"
-          >
-            <Image
-              src="/res/img/patos-deals.svg"
-              alt="Patos Deals"
-              fill
-              priority
-              sizes="176px"
-              className="object-contain object-left"
-            />
-          </Link>
-
-          <div className="flex items-center gap-3">
-            <span className="hidden text-sm text-muted sm:inline">
-              Panel administrativo
-            </span>
-
-            <span
-              className="h-2.5 w-2.5 rounded-full bg-success"
-              title="Panel disponible"
-              aria-label="Panel disponible"
-            />
-          </div>
-        </div>
-      </header>
-
       {/* Contenido principal */}
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-10 lg:px-12 lg:py-12">
         {/* Encabezado */}

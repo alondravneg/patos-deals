@@ -53,6 +53,8 @@ type Payment = {
   customer_id: string;
   payment_date: string;
   amount_mxn: number | string;
+  net_received_mxn: number | string;
+  commission_amount_mxn: number | string;
   payment_method: string;
   reference: string | null;
   notes: string | null;
@@ -149,6 +151,7 @@ export default function FinanzasPage() {
 
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [paymentAmount, setPaymentAmount] = useState("");
+  const [netReceivedAmount, setNetReceivedAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("transfer");
   const [paymentDate, setPaymentDate] = useState(localDateValue);
   const [reference, setReference] = useState("");
@@ -167,10 +170,10 @@ export default function FinanzasPage() {
         allocationsResult,
         refundsResult,
       ] = await Promise.all([
+        // Incluir también clientes inactivos que todavía tengan adeudos pendientes.
         supabase
           .from("customers")
           .select("id, full_name, phone, email")
-          .eq("active", true)
           .order("full_name"),
         supabase
           .from("sales")
@@ -184,7 +187,7 @@ export default function FinanzasPage() {
         supabase
           .from("payments")
           .select(
-            "id, customer_id, payment_date, amount_mxn, payment_method, reference, notes, status, created_at",
+            "id, customer_id, payment_date, amount_mxn, net_received_mxn, commission_amount_mxn, payment_method, reference, notes, status, created_at",
           )
           .order("payment_date", { ascending: false }),
         supabase
@@ -400,6 +403,18 @@ export default function FinanzasPage() {
 
   // Las cuentas se ordenan de la más antigua a la más reciente.
   // Si tienen la misma fecha, el folio funciona como desempate.
+  // Mantener la selección del formulario alineada con los clientes que aún deben.
+  useEffect(() => {
+    if (
+      selectedCustomerId &&
+      !receivableGroups.some((group) => group.customerId === selectedCustomerId)
+    ) {
+      setSelectedCustomerId("");
+      setPaymentAmount("");
+      setNetReceivedAmount("");
+    }
+  }, [selectedCustomerId, receivableGroups]);
+
   const customerOpenSales = useMemo(
     () =>
       saleBalances
@@ -421,6 +436,19 @@ export default function FinanzasPage() {
     0,
   );
   const paymentAmountNumber = Number(paymentAmount || 0);
+  const netReceivedNumber = Number(netReceivedAmount || 0);
+  const cardNetValid =
+    paymentMethod !== "card" ||
+    (Number.isFinite(netReceivedNumber) &&
+      netReceivedNumber > 0 &&
+      netReceivedNumber <= paymentAmountNumber + 0.009);
+  const commissionPreview =
+    paymentMethod === "card" && cardNetValid
+      ? Math.max(
+          Math.round((paymentAmountNumber - netReceivedNumber) * 100) / 100,
+          0,
+        )
+      : 0;
 
   // Distribución automática tipo FIFO: primero se cubren las cuentas más antiguas.
   const automaticAllocations = useMemo(() => {
@@ -579,7 +607,16 @@ export default function FinanzasPage() {
 
     const amount = Number(paymentAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setError("Captura un importe recibido mayor que cero.");
+      setError("Captura el importe que pagó el cliente, mayor que cero.");
+      return;
+    }
+
+    const netReceived = paymentMethod === "card" ? netReceivedNumber : amount;
+
+    if (paymentMethod === "card" && !cardNetValid) {
+      setError(
+        "Captura el depósito neto recibido. Debe ser mayor que cero y no superar el importe pagado por el cliente.",
+      );
       return;
     }
 
@@ -609,18 +646,22 @@ export default function FinanzasPage() {
 
     setSaving(true);
     try {
-      const { data, error: rpcError } = await supabase.rpc("register_payment", {
-        p_customer_id: selectedCustomerId,
-        p_amount_mxn: amount,
-        p_payment_method: paymentMethod,
-        p_allocations: selectedAllocations.map(({ sale_id, amount_mxn }) => ({
-          sale_id,
-          amount_mxn: Number(amount_mxn.toFixed(2)),
-        })),
-        p_payment_date: paymentDate,
-        p_reference: reference.trim() || null,
-        p_notes: notes.trim() || null,
-      });
+      const { data, error: rpcError } = await supabase.rpc(
+        "register_payment_with_net",
+        {
+          p_customer_id: selectedCustomerId,
+          p_amount_mxn: amount,
+          p_payment_method: paymentMethod,
+          p_allocations: selectedAllocations.map(({ sale_id, amount_mxn }) => ({
+            sale_id,
+            amount_mxn: Number(amount_mxn.toFixed(2)),
+          })),
+          p_payment_date: paymentDate,
+          p_reference: reference.trim() || null,
+          p_notes: notes.trim() || null,
+          p_net_received_mxn: netReceived,
+        },
+      );
 
       if (rpcError) throw rpcError;
       const result = data as { success?: boolean; payment_id?: string };
@@ -629,9 +670,10 @@ export default function FinanzasPage() {
       }
 
       setSuccess(
-        `Pago registrado correctamente. Importe: ${money(amount)}. Se distribuyó automáticamente entre ${selectedAllocations.length} venta(s), comenzando por la cuenta más antigua.`,
+        `Pago registrado correctamente. Importe aplicado a la deuda: ${money(amount)}.${paymentMethod === "card" ? ` Depósito neto: ${money(netReceived)}. Comisión: ${money(amount - netReceived)}.` : ""} Se distribuyó automáticamente entre ${selectedAllocations.length} venta(s), comenzando por la cuenta más antigua.`,
       );
       setPaymentAmount("");
+      setNetReceivedAmount("");
       setSelectedCustomerId("");
       setPaymentMethod("transfer");
       setPaymentDate(localDateValue());
@@ -715,14 +757,14 @@ export default function FinanzasPage() {
           </div>
           <div className="rounded-2xl border border-[#EFE7DE] bg-white p-5">
             <div className="mb-3 flex items-center justify-between text-sm text-[#78909C]">
-              Dinero recibido{" "}
+              Pagos aplicados a deuda{" "}
               <ArrowDownToLine size={18} className="text-green-700" />
             </div>
             <p className="text-2xl font-bold">
               {loading ? "—" : money(totalReceived)}
             </p>
             <p className="mt-1 text-xs text-[#78909C]">
-              Menos devoluciones registradas
+              Importe pagado por clientes, menos devoluciones
             </p>
           </div>
           <div className="rounded-2xl border border-[#EFE7DE] bg-white p-5">
@@ -737,6 +779,302 @@ export default function FinanzasPage() {
               Saldo pendiente de ventas
             </p>
           </div>
+        </section>
+
+        <section className="rounded-2xl border border-[#EFE7DE] bg-white p-5 sm:p-6">
+          <div className="mb-5 flex items-center gap-3">
+            <div className="rounded-xl bg-[#E2732D]/10 p-2.5 text-[#E2732D]">
+              <CircleDollarSign size={21} />
+            </div>
+            <div>
+              <h2 className="font-bold">Registrar pago o abono</h2>
+              <p className="text-sm text-[#78909C]">
+                Un pago puede distribuirse entre varias ventas del mismo
+                cliente.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={handleRegisterPayment} className="space-y-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label htmlFor="payment-customer" className={labelClass}>
+                  Cliente *
+                </label>
+                <select
+                  id="payment-customer"
+                  required
+                  value={selectedCustomerId}
+                  onChange={(event) => {
+                    setSelectedCustomerId(event.target.value);
+                    setPaymentAmount("");
+                    setNetReceivedAmount("");
+                  }}
+                  className={inputClass}
+                  disabled={saving || receivableGroups.length === 0}
+                >
+                  <option value="">
+                    {receivableGroups.length > 0
+                      ? "Selecciona un cliente con adeudo pendiente"
+                      : "No hay clientes con adeudo pendiente"}
+                  </option>
+                  {receivableGroups.map((group) => (
+                    <option key={group.customerId} value={group.customerId}>
+                      {group.customerName} — {money(group.balance)}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-[#78909C]">
+                  Solo aparecen clientes con saldo pendiente, incluidos los
+                  clientes inactivos que aún tengan deuda.
+                </p>
+              </div>
+              <div>
+                <label htmlFor="payment-amount" className={labelClass}>
+                  Importe pagado por el cliente (MXN) *
+                </label>
+                <input
+                  id="payment-amount"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  max={customerDebt || undefined}
+                  required
+                  value={paymentAmount}
+                  onChange={(event) => setPaymentAmount(event.target.value)}
+                  className={inputClass}
+                  placeholder="0.00"
+                  disabled={
+                    saving ||
+                    !selectedCustomerId ||
+                    customerOpenSales.length === 0
+                  }
+                />
+                {selectedCustomerId && (
+                  <p className="mt-1 text-xs text-[#78909C]">
+                    Deuda total pendiente: {money(customerDebt)}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="payment-method" className={labelClass}>
+                  Método de pago *
+                </label>
+                <select
+                  id="payment-method"
+                  value={paymentMethod}
+                  onChange={(event) => {
+                    setPaymentMethod(event.target.value);
+                    if (event.target.value !== "card") setNetReceivedAmount("");
+                  }}
+                  className={inputClass}
+                  disabled={saving}
+                >
+                  <option value="transfer">Transferencia</option>
+                  <option value="cash">Efectivo</option>
+                  <option value="card">Tarjeta</option>
+                  <option value="other">Otro</option>
+                </select>
+              </div>
+              {paymentMethod === "card" && (
+                <div>
+                  <label htmlFor="payment-net-received" className={labelClass}>
+                    Depósito neto recibido (MXN) *
+                  </label>
+                  <input
+                    id="payment-net-received"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    max={paymentAmountNumber || undefined}
+                    required
+                    value={netReceivedAmount}
+                    onChange={(event) =>
+                      setNetReceivedAmount(event.target.value)
+                    }
+                    className={inputClass}
+                    placeholder="Ej. 96.00"
+                    disabled={saving}
+                  />
+                  <p className="mt-1 text-xs text-[#78909C]">
+                    Captura lo que realmente te depositó la terminal o el link.
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-[#CC6255]">
+                    Comisión calculada: {money(commissionPreview)}
+                  </p>
+                </div>
+              )}
+              <div>
+                <label htmlFor="payment-date" className={labelClass}>
+                  Fecha de pago *
+                </label>
+                <div className="relative">
+                  <CalendarDays
+                    size={17}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[#78909C]"
+                  />
+                  <input
+                    id="payment-date"
+                    type="date"
+                    required
+                    value={paymentDate}
+                    onChange={(event) => setPaymentDate(event.target.value)}
+                    className={`${inputClass} pl-10`}
+                    disabled={saving}
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="payment-reference" className={labelClass}>
+                  Referencia (opcional)
+                </label>
+                <input
+                  id="payment-reference"
+                  value={reference}
+                  onChange={(event) => setReference(event.target.value)}
+                  className={inputClass}
+                  placeholder="Folio o autorización"
+                  disabled={saving}
+                />
+              </div>
+            </div>
+
+            {selectedCustomerId && (
+              <div className="rounded-xl border border-[#EFE7DE] p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold">
+                      Distribución automática del abono
+                    </h3>
+                    <p className="text-xs text-[#78909C]">
+                      El sistema aplica el pago a las cuentas más antiguas
+                      primero. No necesitas elegir folios.
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-[#78909C]">Abono a registrar</p>
+                    <p className="text-lg font-bold">
+                      {money(
+                        Number.isFinite(paymentAmountNumber)
+                          ? paymentAmountNumber
+                          : 0,
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {customerOpenSales.length === 0 ? (
+                  <p className="rounded-lg bg-[#FDF9F7] p-4 text-sm text-[#78909C]">
+                    Este cliente no tiene ventas con saldo pendiente.
+                  </p>
+                ) : (
+                  <>
+                    <div className="mb-3 flex items-center justify-between rounded-lg bg-[#FDF9F7] p-3">
+                      <span className="text-sm text-[#78909C]">
+                        Deuda total del cliente
+                      </span>
+                      <span className="font-bold">{money(customerDebt)}</span>
+                    </div>
+
+                    {paymentExceedsDebt && (
+                      <p
+                        role="alert"
+                        className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+                      >
+                        El abono no puede superar la deuda total de{" "}
+                        {money(customerDebt)}.
+                      </p>
+                    )}
+
+                    <div className="space-y-2">
+                      {customerOpenSales.map((item) => {
+                        const applied =
+                          automaticAllocations.find(
+                            (allocation) => allocation.sale_id === item.sale.id,
+                          )?.amount_mxn ?? 0;
+
+                        return (
+                          <div
+                            key={item.sale.id}
+                            className="grid grid-cols-1 items-center gap-2 rounded-lg bg-[#FDF9F7] p-3 sm:grid-cols-[1fr_auto]"
+                          >
+                            <div>
+                              <p className="text-sm font-semibold">
+                                {item.sale.folio}
+                              </p>
+                              <p className="text-xs text-[#78909C]">
+                                Saldo pendiente: {money(item.balance)}
+                              </p>
+                            </div>
+                            <div className="text-left sm:text-right">
+                              <p className="text-xs text-[#78909C]">
+                                Abono aplicado
+                              </p>
+                              <p className="font-semibold">{money(applied)}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-3 flex items-center justify-between border-t border-[#EFE7DE] pt-3">
+                      <span className="text-sm font-semibold">
+                        Total distribuido
+                      </span>
+                      <span className="text-lg font-bold text-[#36709E]">
+                        {money(allocationTotal)}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="payment-notes" className={labelClass}>
+                Notas (opcional)
+              </label>
+              <textarea
+                id="payment-notes"
+                rows={2}
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                className={inputClass}
+                placeholder="Detalles adicionales del pago"
+                disabled={saving}
+              />
+            </div>
+
+            <div className="flex flex-col items-stretch justify-between gap-3 border-t border-[#EFE7DE] pt-4 sm:flex-row sm:items-center">
+              <p className="text-xs text-[#78909C]">
+                El pago se distribuirá automáticamente entre las cuentas
+                pendientes más antiguas.
+              </p>
+              <button
+                type="submit"
+                disabled={
+                  saving ||
+                  loading ||
+                  !selectedCustomerId ||
+                  customerOpenSales.length === 0 ||
+                  !Number.isFinite(paymentAmountNumber) ||
+                  paymentAmountNumber <= 0 ||
+                  paymentExceedsDebt ||
+                  !cardNetValid ||
+                  Math.abs(allocationTotal - paymentAmountNumber) > 0.009
+                }
+                className="flex items-center justify-center gap-2 rounded-xl bg-[#E2732D] px-5 py-3 font-bold text-white transition hover:bg-[#CC6255] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saving ? (
+                  <LoaderCircle size={18} className="animate-spin" />
+                ) : (
+                  <CheckCircle2 size={18} />
+                )}
+                {saving
+                  ? "Registrando pago..."
+                  : `Registrar pago ${paymentAmountNumber > 0 ? money(paymentAmountNumber) : ""}`}
+              </button>
+            </div>
+          </form>
         </section>
 
         <section className="rounded-2xl border border-[#EFE7DE] bg-white p-5 sm:p-6">
@@ -940,261 +1278,6 @@ export default function FinanzasPage() {
         </section>
 
         <section className="rounded-2xl border border-[#EFE7DE] bg-white p-5 sm:p-6">
-          <div className="mb-5 flex items-center gap-3">
-            <div className="rounded-xl bg-[#E2732D]/10 p-2.5 text-[#E2732D]">
-              <CircleDollarSign size={21} />
-            </div>
-            <div>
-              <h2 className="font-bold">Registrar pago o abono</h2>
-              <p className="text-sm text-[#78909C]">
-                Un pago puede distribuirse entre varias ventas del mismo
-                cliente.
-              </p>
-            </div>
-          </div>
-
-          <form onSubmit={handleRegisterPayment} className="space-y-5">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div>
-                <label htmlFor="payment-customer" className={labelClass}>
-                  Cliente *
-                </label>
-                <select
-                  id="payment-customer"
-                  required
-                  value={selectedCustomerId}
-                  onChange={(event) => {
-                    setSelectedCustomerId(event.target.value);
-                    setPaymentAmount("");
-                  }}
-                  className={inputClass}
-                  disabled={saving}
-                >
-                  <option value="">Selecciona un cliente</option>
-                  {customers.map((customer) => (
-                    <option key={customer.id} value={customer.id}>
-                      {customer.full_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="payment-amount" className={labelClass}>
-                  Importe recibido (MXN) *
-                </label>
-                <input
-                  id="payment-amount"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  max={customerDebt || undefined}
-                  required
-                  value={paymentAmount}
-                  onChange={(event) => setPaymentAmount(event.target.value)}
-                  className={inputClass}
-                  placeholder="0.00"
-                  disabled={
-                    saving ||
-                    !selectedCustomerId ||
-                    customerOpenSales.length === 0
-                  }
-                />
-                {selectedCustomerId && (
-                  <p className="mt-1 text-xs text-[#78909C]">
-                    Deuda total pendiente: {money(customerDebt)}
-                  </p>
-                )}
-              </div>
-              <div>
-                <label htmlFor="payment-method" className={labelClass}>
-                  Método de pago *
-                </label>
-                <select
-                  id="payment-method"
-                  value={paymentMethod}
-                  onChange={(event) => setPaymentMethod(event.target.value)}
-                  className={inputClass}
-                  disabled={saving}
-                >
-                  <option value="transfer">Transferencia</option>
-                  <option value="cash">Efectivo</option>
-                  <option value="card">Tarjeta</option>
-                  <option value="other">Otro</option>
-                </select>
-              </div>
-              <div>
-                <label htmlFor="payment-date" className={labelClass}>
-                  Fecha de pago *
-                </label>
-                <div className="relative">
-                  <CalendarDays
-                    size={17}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[#78909C]"
-                  />
-                  <input
-                    id="payment-date"
-                    type="date"
-                    required
-                    value={paymentDate}
-                    onChange={(event) => setPaymentDate(event.target.value)}
-                    className={`${inputClass} pl-10`}
-                    disabled={saving}
-                  />
-                </div>
-              </div>
-              <div>
-                <label htmlFor="payment-reference" className={labelClass}>
-                  Referencia (opcional)
-                </label>
-                <input
-                  id="payment-reference"
-                  value={reference}
-                  onChange={(event) => setReference(event.target.value)}
-                  className={inputClass}
-                  placeholder="Folio o autorización"
-                  disabled={saving}
-                />
-              </div>
-            </div>
-
-            {selectedCustomerId && (
-              <div className="rounded-xl border border-[#EFE7DE] p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h3 className="font-semibold">
-                      Distribución automática del abono
-                    </h3>
-                    <p className="text-xs text-[#78909C]">
-                      El sistema aplica el pago a las cuentas más antiguas
-                      primero. No necesitas elegir folios.
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-[#78909C]">Abono a registrar</p>
-                    <p className="text-lg font-bold">
-                      {money(
-                        Number.isFinite(paymentAmountNumber)
-                          ? paymentAmountNumber
-                          : 0,
-                      )}
-                    </p>
-                  </div>
-                </div>
-
-                {customerOpenSales.length === 0 ? (
-                  <p className="rounded-lg bg-[#FDF9F7] p-4 text-sm text-[#78909C]">
-                    Este cliente no tiene ventas con saldo pendiente.
-                  </p>
-                ) : (
-                  <>
-                    <div className="mb-3 flex items-center justify-between rounded-lg bg-[#FDF9F7] p-3">
-                      <span className="text-sm text-[#78909C]">
-                        Deuda total del cliente
-                      </span>
-                      <span className="font-bold">{money(customerDebt)}</span>
-                    </div>
-
-                    {paymentExceedsDebt && (
-                      <p
-                        role="alert"
-                        className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"
-                      >
-                        El abono no puede superar la deuda total de{" "}
-                        {money(customerDebt)}.
-                      </p>
-                    )}
-
-                    <div className="space-y-2">
-                      {customerOpenSales.map((item) => {
-                        const applied =
-                          automaticAllocations.find(
-                            (allocation) => allocation.sale_id === item.sale.id,
-                          )?.amount_mxn ?? 0;
-
-                        return (
-                          <div
-                            key={item.sale.id}
-                            className="grid grid-cols-1 items-center gap-2 rounded-lg bg-[#FDF9F7] p-3 sm:grid-cols-[1fr_auto]"
-                          >
-                            <div>
-                              <p className="text-sm font-semibold">
-                                {item.sale.folio}
-                              </p>
-                              <p className="text-xs text-[#78909C]">
-                                Saldo pendiente: {money(item.balance)}
-                              </p>
-                            </div>
-                            <div className="text-left sm:text-right">
-                              <p className="text-xs text-[#78909C]">
-                                Abono aplicado
-                              </p>
-                              <p className="font-semibold">{money(applied)}</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-3 flex items-center justify-between border-t border-[#EFE7DE] pt-3">
-                      <span className="text-sm font-semibold">
-                        Total distribuido
-                      </span>
-                      <span className="text-lg font-bold text-[#36709E]">
-                        {money(allocationTotal)}
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            <div>
-              <label htmlFor="payment-notes" className={labelClass}>
-                Notas (opcional)
-              </label>
-              <textarea
-                id="payment-notes"
-                rows={2}
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                className={inputClass}
-                placeholder="Detalles adicionales del pago"
-                disabled={saving}
-              />
-            </div>
-
-            <div className="flex flex-col items-stretch justify-between gap-3 border-t border-[#EFE7DE] pt-4 sm:flex-row sm:items-center">
-              <p className="text-xs text-[#78909C]">
-                El pago se distribuirá automáticamente entre las cuentas
-                pendientes más antiguas.
-              </p>
-              <button
-                type="submit"
-                disabled={
-                  saving ||
-                  loading ||
-                  !selectedCustomerId ||
-                  customerOpenSales.length === 0 ||
-                  !Number.isFinite(paymentAmountNumber) ||
-                  paymentAmountNumber <= 0 ||
-                  paymentExceedsDebt ||
-                  Math.abs(allocationTotal - paymentAmountNumber) > 0.009
-                }
-                className="flex items-center justify-center gap-2 rounded-xl bg-[#E2732D] px-5 py-3 font-bold text-white transition hover:bg-[#CC6255] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {saving ? (
-                  <LoaderCircle size={18} className="animate-spin" />
-                ) : (
-                  <CheckCircle2 size={18} />
-                )}
-                {saving
-                  ? "Registrando pago..."
-                  : `Registrar pago ${paymentAmountNumber > 0 ? money(paymentAmountNumber) : ""}`}
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <section className="rounded-2xl border border-[#EFE7DE] bg-white p-5 sm:p-6">
           <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <div className="rounded-xl bg-[#36709E]/10 p-2.5 text-[#36709E]">
@@ -1341,7 +1424,7 @@ export default function FinanzasPage() {
           ) : (
             <>
               <div className="overflow-x-auto rounded-xl border border-[#EFE7DE]">
-                <table className="w-full min-w-[760px] text-left text-sm">
+                <table className="w-full min-w-[940px] text-left text-sm">
                   <thead className="border-b border-[#EFE7DE] bg-[#FDF9F7] text-xs uppercase tracking-wide text-[#78909C]">
                     <tr>
                       <th className="px-3 py-3 font-semibold">Fecha</th>
@@ -1350,7 +1433,13 @@ export default function FinanzasPage() {
                         Ventas relacionadas
                       </th>
                       <th className="px-3 py-3 text-right font-semibold">
-                        Pago
+                        Pago del cliente
+                      </th>
+                      <th className="px-3 py-3 text-right font-semibold">
+                        Depósito neto
+                      </th>
+                      <th className="px-3 py-3 text-right font-semibold">
+                        Comisión
                       </th>
                       <th className="px-3 py-3 text-right font-semibold">
                         Devolución
@@ -1370,6 +1459,16 @@ export default function FinanzasPage() {
                           <td className="px-3 py-3.5">{folios}</td>
                           <td className="whitespace-nowrap px-3 py-3.5 text-right font-semibold">
                             {money(Number(payment.amount_mxn))}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-3.5 text-right">
+                            {money(
+                              Number(
+                                payment.net_received_mxn ?? payment.amount_mxn,
+                              ),
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-3.5 text-right">
+                            {money(Number(payment.commission_amount_mxn ?? 0))}
                           </td>
                           <td className="whitespace-nowrap px-3 py-3.5 text-right">
                             {money(refundTotal)}

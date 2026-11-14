@@ -527,7 +527,7 @@ export default function InventarioPage() {
                   }}
                   className={`${inputClass} py-2.5 pl-9`}
                 >
-                  <option value="all">Todos los estados</option>
+                  <option value="available">Disponible</option>
                   {Object.entries(statusLabels).map(([value, label]) => (
                     <option key={value} value={value}>
                       {label}

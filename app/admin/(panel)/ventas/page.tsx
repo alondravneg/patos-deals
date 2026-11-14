@@ -60,6 +60,10 @@ type SaleResult = {
   total_mxn: number;
   paid_mxn: number;
   balance_mxn: number;
+  subtotal_mxn?: number;
+  discount_type?: string;
+  discount_value?: number;
+  discount_amount_mxn?: number;
 };
 
 type OperationPeriod = {
@@ -103,6 +107,7 @@ const inputClass =
   "w-full rounded-xl border border-[#EFE7DE] bg-white px-4 py-3 text-sm text-[#0C304F] outline-none transition placeholder:text-[#78909C] focus:border-[#36709E] focus:ring-2 focus:ring-[#36709E]/10";
 
 const labelClass = "mb-2 block text-sm font-semibold text-[#0C304F]";
+const PRODUCT_PAGE_SIZE = 12;
 
 export default function VentasPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -118,11 +123,16 @@ export default function VentasPage() {
 
   const [customerSearch, setCustomerSearch] = useState("");
   const [productSearch, setProductSearch] = useState("");
+  const [currentProductPage, setCurrentProductPage] = useState(1);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
     null,
   );
 
   const [initialPayment, setInitialPayment] = useState("");
+  const [discountType, setDiscountType] = useState<"percentage" | "fixed">(
+    "percentage",
+  );
+  const [discountValue, setDiscountValue] = useState("");
   const [separatePrices, setSeparatePrices] = useState<Record<string, boolean>>(
     {},
   );
@@ -189,6 +199,7 @@ export default function VentasPage() {
       setInventory(
         (inventoryResult.data ?? []) as unknown as InventoryProduct[],
       );
+      setCurrentProductPage(1);
     } catch (err) {
       console.error("Error cargando ventas:", err);
       setError(
@@ -203,25 +214,56 @@ export default function VentasPage() {
     void loadData();
   }, [loadData]);
 
-  const total = cart.reduce(
-    (sum, item) => sum + parseAmount(item.sale_price_mxn),
+  const subtotal =
+    Math.round(
+      cart.reduce((sum, item) => sum + parseAmount(item.sale_price_mxn), 0) *
+        100,
+    ) / 100;
+  const discountValueNumber = parseAmount(discountValue);
+  const discountAmount = Math.min(
+    subtotal,
+    Math.round(
+      (discountType === "percentage"
+        ? (subtotal * discountValueNumber) / 100
+        : discountValueNumber) * 100,
+    ) / 100,
+  );
+  const discountValid =
+    isValidAmountInput(discountValue) &&
+    discountValueNumber >= 0 &&
+    (discountValueNumber === 0 ||
+      (discountType === "percentage"
+        ? discountValueNumber < 100
+        : discountValueNumber < subtotal));
+  const total = Math.max(
+    Math.round((subtotal - discountAmount) * 100) / 100,
     0,
   );
 
   const paymentAmount = parseAmount(initialPayment);
   const validPayment =
+    discountValid &&
     isValidAmountInput(initialPayment) &&
     Number.isFinite(paymentAmount) &&
     paymentAmount >= 0 &&
     paymentAmount <= total;
 
-  const balance = total - (Number.isFinite(paymentAmount) ? paymentAmount : 0);
-
-  const filteredCustomers = customers.filter((customer) =>
-    `${customer.full_name} ${customer.phone ?? ""} ${customer.email ?? ""}`
-      .toLowerCase()
-      .includes(customerSearch.toLowerCase()),
+  const balance = Math.max(
+    Math.round(
+      (total - (Number.isFinite(paymentAmount) ? paymentAmount : 0)) * 100,
+    ) / 100,
+    0,
   );
+
+  const customerSearchTerm = customerSearch.trim().toLocaleLowerCase("es-MX");
+  const canSearchCustomers = customerSearchTerm.length >= 2;
+  const filteredCustomers = canSearchCustomers
+    ? customers.filter((customer) =>
+        `${customer.full_name} ${customer.phone ?? ""} ${customer.email ?? ""}`
+          .toLocaleLowerCase("es-MX")
+          .includes(customerSearchTerm),
+      )
+    : [];
 
   const filteredInventory = inventory.filter((product) => {
     const item = product.purchase_items;
@@ -238,6 +280,27 @@ export default function VentasPage() {
 
     return searchable.includes(productSearch.toLowerCase());
   });
+
+  const totalProductPages = Math.max(
+    1,
+    Math.ceil(filteredInventory.length / PRODUCT_PAGE_SIZE),
+  );
+  const safeProductPage = Math.min(currentProductPage, totalProductPages);
+  const productPageStart = (safeProductPage - 1) * PRODUCT_PAGE_SIZE;
+  const paginatedInventory = filteredInventory.slice(
+    productPageStart,
+    productPageStart + PRODUCT_PAGE_SIZE,
+  );
+  const visibleProductPages = Array.from(
+    { length: Math.min(totalProductPages, 5) },
+    (_, index) => {
+      const firstVisiblePage = Math.min(
+        Math.max(safeProductPage - 2, 1),
+        Math.max(totalProductPages - 4, 1),
+      );
+      return firstVisiblePage + index;
+    },
+  );
 
   const cartGroups = useMemo(() => {
     const groups = new Map<string, CartItem[]>();
@@ -450,8 +513,17 @@ export default function VentasPage() {
       return;
     }
 
+    if (!discountValid) {
+      setError(
+        discountType === "percentage"
+          ? "El descuento porcentual debe ser mayor o igual a 0 y menor a 100%."
+          : "El descuento fijo debe ser mayor o igual a 0 y menor que el subtotal.",
+      );
+      return;
+    }
+
     if (!validPayment) {
-      setError("El anticipo debe estar entre $0 y el total de la venta.");
+      setError("El anticipo debe estar entre $0 y el total final de la venta.");
       return;
     }
 
@@ -463,19 +535,24 @@ export default function VentasPage() {
     setSaving(true);
 
     try {
-      const { data, error: rpcError } = await supabase.rpc("create_sale", {
-        p_customer_id: selectedCustomer.id,
-        p_items: cart.map((item) => ({
-          inventory_unit_id: item.inventory_unit_id,
-          sale_price_mxn: parseAmount(item.sale_price_mxn),
-          is_wholesale: item.is_wholesale,
-        })),
-        p_initial_payment: paymentAmount,
-        p_payment_method: paymentMethod,
-        p_payment_reference: paymentReference.trim() || null,
-        p_notes: notes.trim() || null,
-        p_operation_period_id: selectedPeriodId,
-      });
+      const { data, error: rpcError } = await supabase.rpc(
+        "create_sale_with_discount",
+        {
+          p_customer_id: selectedCustomer.id,
+          p_items: cart.map((item) => ({
+            inventory_unit_id: item.inventory_unit_id,
+            sale_price_mxn: parseAmount(item.sale_price_mxn),
+            is_wholesale: item.is_wholesale,
+          })),
+          p_initial_payment: paymentAmount,
+          p_payment_method: paymentMethod,
+          p_payment_reference: paymentReference.trim() || null,
+          p_notes: notes.trim() || null,
+          p_operation_period_id: selectedPeriodId,
+          p_discount_type: discountValueNumber > 0 ? discountType : "none",
+          p_discount_value: discountValueNumber,
+        },
+      );
 
       if (rpcError) throw rpcError;
 
@@ -491,6 +568,8 @@ export default function VentasPage() {
       setCustomerSearch("");
       setProductSearch("");
       setInitialPayment("");
+      setDiscountType("percentage");
+      setDiscountValue("");
       setSeparatePrices({});
       setPaymentMethod("transfer");
       setPaymentReference("");
@@ -572,9 +651,21 @@ export default function VentasPage() {
                   Folio: <strong>{success.folio}</strong>
                 </p>
 
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
                   <div className="rounded-xl bg-white/80 p-3">
-                    <p className="text-xs text-green-800">Total</p>
+                    <p className="text-xs text-green-800">Subtotal</p>
+                    <p className="mt-1 font-bold">
+                      {money(Number(success.subtotal_mxn ?? success.total_mxn))}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-white/80 p-3">
+                    <p className="text-xs text-green-800">Descuento</p>
+                    <p className="mt-1 font-bold">
+                      {money(Number(success.discount_amount_mxn ?? 0))}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-white/80 p-3">
+                    <p className="text-xs text-green-800">Total final</p>
                     <p className="mt-1 font-bold">
                       {money(Number(success.total_mxn))}
                     </p>
@@ -680,31 +771,58 @@ export default function VentasPage() {
                       />
                     </div>
 
-                    {filteredCustomers.length > 0 ? (
-                      <div className="max-h-56 divide-y divide-[#EFE7DE] overflow-y-auto rounded-xl border border-[#EFE7DE]">
-                        {filteredCustomers.slice(0, 8).map((customer) => (
-                          <button
-                            key={customer.id}
-                            type="button"
-                            onClick={() => setSelectedCustomer(customer)}
-                            className="flex w-full items-center justify-between gap-3 p-3 text-left transition hover:bg-[#FDF9F7]"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold">
-                                {customer.full_name}
-                              </p>
-                              <p className="mt-0.5 truncate text-xs text-[#78909C]">
-                                {customer.phone ||
-                                  customer.email ||
-                                  "Sin datos de contacto"}
-                              </p>
-                            </div>
-                            <span className="text-sm font-semibold text-[#36709E]">
-                              Seleccionar
-                            </span>
-                          </button>
-                        ))}
+                    {!canSearchCustomers ? (
+                      <div className="rounded-xl border border-dashed border-[#EFE7DE] px-4 py-6 text-center">
+                        <Search
+                          className="mx-auto mb-2 text-[#78909C]"
+                          size={24}
+                        />
+                        <p className="text-sm font-medium">
+                          {customerSearchTerm.length === 1
+                            ? "Escribe al menos 2 caracteres para buscar."
+                            : "Busca un cliente para comenzar."}
+                        </p>
+                        <p className="mt-1 text-xs text-[#78909C]">
+                          Puedes buscar por nombre, teléfono o correo
+                          electrónico.
+                        </p>
                       </div>
+                    ) : filteredCustomers.length > 0 ? (
+                      <>
+                        <p className="mb-2 text-xs text-[#78909C]">
+                          {filteredCustomers.length}{" "}
+                          {filteredCustomers.length === 1
+                            ? "coincidencia"
+                            : "coincidencias"}
+                        </p>
+                        <div className="max-h-56 divide-y divide-[#EFE7DE] overflow-y-auto rounded-xl border border-[#EFE7DE]">
+                          {filteredCustomers.map((customer) => (
+                            <button
+                              key={customer.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedCustomer(customer);
+                                setCustomerSearch("");
+                              }}
+                              className="flex w-full items-center justify-between gap-3 p-3 text-left transition hover:bg-[#FDF9F7]"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold">
+                                  {customer.full_name}
+                                </p>
+                                <p className="mt-0.5 truncate text-xs text-[#78909C]">
+                                  {customer.phone ||
+                                    customer.email ||
+                                    "Sin datos de contacto"}
+                                </p>
+                              </div>
+                              <span className="shrink-0 text-sm font-semibold text-[#36709E]">
+                                Seleccionar
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
                     ) : (
                       <div className="rounded-xl border border-dashed border-[#EFE7DE] px-4 py-7 text-center">
                         <UserRound
@@ -712,12 +830,11 @@ export default function VentasPage() {
                           size={26}
                         />
                         <p className="text-sm font-medium">
-                          {customerSearch
-                            ? "No encontramos ese cliente."
-                            : "Todavía no hay clientes registrados."}
+                          No encontramos ese cliente.
                         </p>
                         <p className="mt-1 text-xs text-[#78909C]">
-                          Puedes crear uno para continuar.
+                          Intenta con otro nombre, teléfono o correo. También
+                          puedes registrar un cliente nuevo.
                         </p>
                       </div>
                     )}
@@ -816,58 +933,140 @@ export default function VentasPage() {
                   />
                   <input
                     value={productSearch}
-                    onChange={(event) => setProductSearch(event.target.value)}
+                    onChange={(event) => {
+                      setProductSearch(event.target.value);
+                      setCurrentProductPage(1);
+                    }}
                     placeholder="Buscar producto, marca, modelo o número de unidad..."
                     className={`${inputClass} pl-10`}
                   />
                 </div>
 
                 {filteredInventory.length > 0 ? (
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    {filteredInventory.map((product) => {
-                      const item = product.purchase_items;
-                      const alreadyAdded = cart.some(
-                        (cartItem) => cartItem.inventory_unit_id === product.id,
-                      );
+                  <>
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[#78909C]">
+                      <span>
+                        Mostrando {productPageStart + 1}–
+                        {Math.min(
+                          productPageStart + PRODUCT_PAGE_SIZE,
+                          filteredInventory.length,
+                        )}{" "}
+                        de {filteredInventory.length} unidades
+                      </span>
+                      <span>{PRODUCT_PAGE_SIZE} por página</span>
+                    </div>
 
-                      return (
-                        <article
-                          key={product.id}
-                          className="rounded-xl border border-[#EFE7DE] p-4 transition hover:border-[#36709E]/40"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="font-semibold">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                      {paginatedInventory.map((product) => {
+                        const item = product.purchase_items;
+                        const alreadyAdded = cart.some(
+                          (cartItem) =>
+                            cartItem.inventory_unit_id === product.id,
+                        );
+
+                        return (
+                          <article
+                            key={product.id}
+                            className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-[#EFE7DE] bg-white p-3 transition hover:border-[#36709E]/40"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold leading-5">
                                 {item?.product_name || "Producto sin nombre"}
                               </p>
-                              <p className="mt-1 text-xs text-[#78909C]">
+                              <p className="mt-0.5 truncate text-[11px] text-[#78909C]">
                                 {[item?.brand, item?.model]
                                   .filter(Boolean)
                                   .join(" · ") || "Sin marca o modelo"}
                               </p>
-                              <p className="mt-2 text-xs text-[#78909C]">
-                                Unidad #{product.unit_number}
-                              </p>
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <span className="text-[11px] text-[#78909C]">
+                                  Unidad #{product.unit_number}
+                                </span>
+                                <span className="rounded-md bg-green-50 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">
+                                  Disponible
+                                </span>
+                              </div>
                             </div>
-                            <span className="shrink-0 rounded-lg bg-green-50 px-2 py-1 text-xs font-semibold text-green-700">
-                              Disponible
-                            </span>
-                          </div>
+                            <button
+                              type="button"
+                              disabled={alreadyAdded}
+                              onClick={() => addToCart(product)}
+                              aria-label={
+                                alreadyAdded
+                                  ? `${item?.product_name ?? "Producto"} agregado a la venta`
+                                  : `Agregar ${item?.product_name ?? "producto"} a la venta`
+                              }
+                              title={
+                                alreadyAdded
+                                  ? "Agregado a la venta"
+                                  : "Agregar a la venta"
+                              }
+                              className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[#36709E] px-2.5 py-2 text-xs font-semibold text-[#36709E] transition hover:bg-[#36709E] hover:text-white disabled:cursor-not-allowed disabled:border-[#EFE7DE] disabled:bg-[#FDF9F7] disabled:text-[#78909C]"
+                            >
+                              <Plus size={14} />
+                              <span className="hidden 2xl:inline">
+                                {alreadyAdded ? "Agregado" : "Agregar"}
+                              </span>
+                            </button>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    {totalProductPages > 1 && (
+                      <nav
+                        aria-label="Paginación de productos"
+                        className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#EFE7DE] pt-4"
+                      >
+                        <p className="text-xs text-[#78909C]">
+                          Página {safeProductPage} de {totalProductPages}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <button
                             type="button"
-                            disabled={alreadyAdded}
-                            onClick={() => addToCart(product)}
-                            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-[#36709E] px-3 py-2.5 text-sm font-semibold text-[#36709E] transition hover:bg-[#36709E] hover:text-white disabled:cursor-not-allowed disabled:border-[#EFE7DE] disabled:bg-[#FDF9F7] disabled:text-[#78909C]"
+                            onClick={() =>
+                              setCurrentProductPage((page) =>
+                                Math.max(1, page - 1),
+                              )
+                            }
+                            disabled={safeProductPage === 1}
+                            className="rounded-lg border border-[#EFE7DE] px-3 py-2 text-xs font-semibold text-[#36709E] transition hover:bg-[#FDF9F7] disabled:cursor-not-allowed disabled:opacity-40"
                           >
-                            <Plus size={16} />
-                            {alreadyAdded
-                              ? "Agregado a la venta"
-                              : "Agregar a la venta"}
+                            Anterior
                           </button>
-                        </article>
-                      );
-                    })}
-                  </div>
+                          {visibleProductPages.map((page) => (
+                            <button
+                              key={page}
+                              type="button"
+                              onClick={() => setCurrentProductPage(page)}
+                              aria-current={
+                                safeProductPage === page ? "page" : undefined
+                              }
+                              className={`min-w-8 rounded-lg border px-2.5 py-2 text-xs font-semibold transition ${
+                                safeProductPage === page
+                                  ? "border-[#36709E] bg-[#36709E] text-white"
+                                  : "border-[#EFE7DE] text-[#36709E] hover:bg-[#FDF9F7]"
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCurrentProductPage((page) =>
+                                Math.min(totalProductPages, page + 1),
+                              )
+                            }
+                            disabled={safeProductPage === totalProductPages}
+                            className="rounded-lg border border-[#EFE7DE] px-3 py-2 text-xs font-semibold text-[#36709E] transition hover:bg-[#FDF9F7] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Siguiente
+                          </button>
+                        </div>
+                      </nav>
+                    )}
+                  </>
                 ) : (
                   <div className="rounded-xl border border-dashed border-[#EFE7DE] px-4 py-10 text-center">
                     <Package
@@ -1185,11 +1384,72 @@ export default function VentasPage() {
                   </div>
                 )}
 
-                <div className="mt-5 border-t border-[#EFE7DE] pt-5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-[#78909C]">
-                      Total de la venta
+                <div className="mt-5 space-y-4 border-t border-[#EFE7DE] pt-5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-[#78909C]">Subtotal</span>
+                    <span className="font-semibold">{money(subtotal)}</span>
+                  </div>
+
+                  <div className="grid grid-cols-[minmax(0,1fr)_minmax(120px,0.85fr)] gap-3">
+                    <div>
+                      <label htmlFor="discount-type" className={labelClass}>
+                        Descuento sobre la venta
+                      </label>
+                      <select
+                        id="discount-type"
+                        value={discountType}
+                        onChange={(event) =>
+                          setDiscountType(
+                            event.target.value as "percentage" | "fixed",
+                          )
+                        }
+                        className={inputClass}
+                        disabled={saving || cart.length === 0}
+                      >
+                        <option value="percentage">Porcentaje (%)</option>
+                        <option value="fixed">Cantidad fija (MXN)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="discount-value" className={labelClass}>
+                        {discountType === "percentage"
+                          ? "Porcentaje"
+                          : "Importe (MXN)"}
+                      </label>
+                      <input
+                        id="discount-value"
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        value={discountValue}
+                        onChange={(event) => {
+                          if (isValidAmountInput(event.target.value)) {
+                            setDiscountValue(event.target.value);
+                          }
+                        }}
+                        className={inputClass}
+                        placeholder="0"
+                        disabled={saving || cart.length === 0}
+                      />
+                    </div>
+                  </div>
+
+                  {!discountValid && (
+                    <p className="text-xs text-red-700">
+                      {discountType === "percentage"
+                        ? "Usa un porcentaje menor a 100%."
+                        : "El descuento debe ser menor que el subtotal."}
+                    </p>
+                  )}
+
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-[#78909C]">Descuento aplicado</span>
+                    <span className="font-semibold text-[#CC6255]">
+                      − {money(discountAmount)}
                     </span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-[#EFE7DE] pt-3">
+                    <span className="font-semibold">Total de la venta</span>
                     <span className="text-2xl font-bold">{money(total)}</span>
                   </div>
                 </div>
@@ -1220,7 +1480,7 @@ export default function VentasPage() {
                     onChange={(event) =>
                       setSelectedPeriodId(event.target.value)
                     }
-                    className={inputClass}
+                    className={`${inputClass} cursor-pointer disabled:cursor-not-allowed`}
                     required
                     disabled={periods.length === 0}
                   >
@@ -1332,7 +1592,17 @@ export default function VentasPage() {
 
                 <div className="mt-5 space-y-3 rounded-xl bg-[#FDF9F7] p-4">
                   <div className="flex justify-between gap-3 text-sm">
-                    <span className="text-[#78909C]">Total</span>
+                    <span className="text-[#78909C]">Subtotal</span>
+                    <span className="font-semibold">{money(subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3 text-sm">
+                    <span className="text-[#78909C]">Descuento</span>
+                    <span className="font-semibold text-[#CC6255]">
+                      − {money(discountAmount)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3 text-sm">
+                    <span className="text-[#78909C]">Total final</span>
                     <span className="font-semibold">{money(total)}</span>
                   </div>
                   <div className="flex justify-between gap-3 text-sm">
