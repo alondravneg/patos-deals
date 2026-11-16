@@ -1843,6 +1843,7 @@ function TicketPaper({
               <h4 className="text-xs font-extrabold uppercase tracking-[0.13em] text-[#0C304F]">
                 Productos de este periodo
               </h4>
+
               <span className="text-[10px] font-semibold text-[#8b8781]">
                 {ticket.products.reduce(
                   (sum, product) => sum + product.quantity,
@@ -1858,61 +1859,80 @@ function TicketPaper({
                 pendiente corresponde a adeudos anteriores.
               </p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="ticket-table w-full min-w-[440px] border-collapse text-left text-[11px] sm:text-xs">
+              <div className="w-full overflow-visible">
+                <table className="ticket-table w-full table-fixed border-collapse text-left text-[10px] sm:text-xs">
+                  <colgroup>
+                    <col className="w-[8%]" />
+                    <col className="w-[17%]" />
+                    <col className="w-[35%]" />
+                    <col className="w-[20%]" />
+                    <col className="w-[20%]" />
+                  </colgroup>
+
                   <thead>
                     <tr className="bg-[#e9e8e6] text-[#CC6255]">
-                      <th className="border border-dotted border-[#aaa7a1] px-2 py-2 text-center font-bold">
+                      <th className="border border-dotted border-[#aaa7a1] px-1 py-2 text-center font-bold">
                         Pz.
                       </th>
-                      <th className="border border-dotted border-[#aaa7a1] px-2 py-2 font-bold">
+
+                      <th className="border border-dotted border-[#aaa7a1] px-1 py-2 font-bold">
                         Tienda
                       </th>
-                      <th className="border border-dotted border-[#aaa7a1] px-2 py-2 font-bold">
+
+                      <th className="border border-dotted border-[#aaa7a1] px-1 py-2 font-bold">
                         Producto
                       </th>
-                      <th className="border border-dotted border-[#aaa7a1] px-2 py-2 text-right font-bold">
+
+                      <th className="border border-dotted border-[#aaa7a1] px-1 py-2 text-right font-bold">
                         Precio
                         <br />
                         unitario
                       </th>
-                      <th className="border border-dotted border-[#aaa7a1] px-2 py-2 text-right font-bold">
+
+                      <th className="border border-dotted border-[#aaa7a1] px-1 py-2 text-right font-bold">
                         Precio
                         <br />
                         total
                       </th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {ticket.products.map((product) => (
                       <tr key={product.key} className="bg-white/75">
-                        <td className="border border-dotted border-[#b8b5b0] px-2 py-2.5 text-center tabular-nums">
+                        <td className="border border-dotted border-[#b8b5b0] px-1 py-2.5 text-center tabular-nums">
                           {product.quantity}
                         </td>
-                        <td className="border border-dotted border-[#b8b5b0] px-2 py-2.5">
+
+                        <td className="break-words border border-dotted border-[#b8b5b0] px-1 py-2.5">
                           {product.storeName}
                         </td>
-                        <td className="border border-dotted border-[#b8b5b0] px-2 py-2.5 font-semibold">
+
+                        <td className="break-words border border-dotted border-[#b8b5b0] px-1 py-2.5 font-semibold">
                           {product.productName}
                         </td>
-                        <td className="border border-dotted border-[#b8b5b0] px-2 py-2.5 text-right tabular-nums">
+
+                        <td className="border border-dotted border-[#b8b5b0] px-1 py-2.5 text-right tabular-nums">
                           {money(product.unitPrice)}
                         </td>
-                        <td className="border border-dotted border-[#b8b5b0] px-2 py-2.5 text-right font-bold tabular-nums">
+
+                        <td className="border border-dotted border-[#b8b5b0] px-1 py-2.5 text-right font-bold tabular-nums">
                           {money(product.total)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
+
                   <tfoot>
                     <tr className="bg-[#f7f5f2] font-bold">
                       <td
                         colSpan={4}
-                        className="border border-dotted border-[#b8b5b0] px-2 py-2.5 text-right"
+                        className="border border-dotted border-[#b8b5b0] px-1 py-2.5 text-right"
                       >
                         Total compras del periodo
                       </td>
-                      <td className="border border-dotted border-[#b8b5b0] px-2 py-2.5 text-right tabular-nums">
+
+                      <td className="border border-dotted border-[#b8b5b0] px-1 py-2.5 text-right tabular-nums">
                         {money(ticket.purchasesTotal)}
                       </td>
                     </tr>
