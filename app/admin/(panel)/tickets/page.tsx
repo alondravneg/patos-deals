@@ -55,6 +55,11 @@ type SaleItem = {
   released_at: string | null;
 };
 
+type SaleDiscount = {
+  sale_id: string;
+  discount_amount_mxn: number | string;
+};
+
 type InventoryUnit = {
   id: string;
   unit_number: number;
@@ -144,6 +149,7 @@ type CustomerTicket = {
   previousBalance: number;
   products: TicketProduct[];
   purchasesTotal: number;
+  discountTotal: number;
   advances: TicketPayment[];
   advancesTotal: number;
   total: number;
@@ -286,6 +292,7 @@ export default function TicketsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [allocations, setAllocations] = useState<PaymentAllocation[]>([]);
   const [refunds, setRefunds] = useState<PaymentRefund[]>([]);
+  const [saleDiscounts, setSaleDiscounts] = useState<SaleDiscount[]>([]);
 
   const [periodId, setPeriodId] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
@@ -326,6 +333,7 @@ export default function TicketsPage() {
           paymentsResult,
           allocationsResult,
           refundsResult,
+          saleDiscountsResult,
         ] = await Promise.all([
           supabase
             .from("operation_periods")
@@ -361,6 +369,9 @@ export default function TicketsPage() {
           supabase
             .from("payment_refunds")
             .select("payment_id, amount_mxn, refund_date"),
+          supabase
+            .from("sale_discounts")
+            .select("sale_id, discount_amount_mxn"),
         ]);
 
         const initialResults = [
@@ -371,6 +382,7 @@ export default function TicketsPage() {
           paymentsResult,
           allocationsResult,
           refundsResult,
+          saleDiscountsResult,
         ];
         const initialError = initialResults.find(
           (result) => result.error,
@@ -445,6 +457,7 @@ export default function TicketsPage() {
         setPayments((paymentsResult.data ?? []) as Payment[]);
         setAllocations((allocationsResult.data ?? []) as PaymentAllocation[]);
         setRefunds((refundsResult.data ?? []) as PaymentRefund[]);
+        setSaleDiscounts((saleDiscountsResult.data ?? []) as SaleDiscount[]);
       } catch (err) {
         console.error("Error cargando tickets:", err);
         setError(
@@ -517,6 +530,14 @@ export default function TicketsPage() {
       const current = itemsBySale.get(item.sale_id) ?? [];
       current.push(item);
       itemsBySale.set(item.sale_id, current);
+    });
+
+    const discountsBySale = new Map<string, number>();
+    saleDiscounts.forEach((discount) => {
+      discountsBySale.set(
+        discount.sale_id,
+        Number(discount.discount_amount_mxn) || 0,
+      );
     });
 
     // Primero se identifican las ventas de la operación seleccionada por su relación directa.
@@ -616,6 +637,7 @@ export default function TicketsPage() {
         previousSales: SaleLedger[];
         products: TicketProduct[];
         purchasesTotal: number;
+        discountTotal: number;
         advances: Map<string, TicketPayment>;
         advancesTotal: number;
       }
@@ -631,6 +653,7 @@ export default function TicketsPage() {
           previousSales: [],
           products: [],
           purchasesTotal: 0,
+          discountTotal: 0,
           advances: new Map<string, TicketPayment>(),
           advancesTotal: 0,
         };
@@ -652,6 +675,7 @@ export default function TicketsPage() {
       if (!ticket) return;
       const saleTotal = totalsBySale.get(sale.id) ?? 0;
       ticket.purchasesTotal += saleTotal;
+      ticket.discountTotal += discountsBySale.get(sale.id) ?? 0;
 
       const ledger = ledgerBySale.get(sale.id);
       (ledger?.payments ?? []).forEach((applied) => {
@@ -748,7 +772,6 @@ export default function TicketsPage() {
       );
       const total = previousBalance + draft.purchasesTotal;
       const remaining = Math.max(total - advancesTotal, 0);
-      if (remaining <= 0.009) return;
 
       result.push({
         customer: draft.customer,
@@ -756,6 +779,7 @@ export default function TicketsPage() {
         previousBalance,
         products: draft.products,
         purchasesTotal: draft.purchasesTotal,
+        discountTotal: draft.discountTotal,
         advances,
         advancesTotal,
         total,
@@ -774,6 +798,7 @@ export default function TicketsPage() {
     customers,
     sales,
     saleItems,
+    saleDiscounts,
     inventoryUnits,
     purchaseItems,
     purchases,
@@ -1338,9 +1363,10 @@ export default function TicketsPage() {
         <section className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.5fr)]">
           <div className="rounded-2xl border border-[#EFE7DE] bg-white p-4 sm:p-5">
             <div className="mb-4">
-              <h2 className="font-bold">Clientes con saldo pendiente</h2>
+              <h2 className="font-bold">Todos los clientes del periodo</h2>
               <p className="mt-1 text-xs text-[#78909C]">
-                Los clientes sin adeudo no aparecen en esta lista.
+                Se muestran clientes con compras registradas, independientemente
+                de si tienen saldo pendiente o ya liquidaron.
               </p>
             </div>
 
@@ -1397,10 +1423,9 @@ export default function TicketsPage() {
                   size={28}
                   className="mx-auto mb-2 text-green-700"
                 />
-                <p className="font-semibold">No hay tickets pendientes</p>
-                <p className="mt-1 text-xs leading-5 text-[#78909C]">
-                  No hay clientes con saldo por pagar en este periodo. Los
-                  clientes liquidados no se muestran.
+                <p className="font-semibold">No hay tickets registrados</p>
+                <p className="mt-1 text-xs text-[#78909C]">
+                  No se encontraron clientes con ventas en este periodo.
                 </p>
                 <div className="mx-auto mt-4 max-w-sm rounded-lg bg-[#FDF9F7] px-3 py-2 text-left text-[11px] leading-5 text-[#78909C]">
                   <p>
@@ -1919,6 +1944,16 @@ function TicketPaper({
                 {money(ticket.purchasesTotal)}
               </span>
             </div>
+            {ticket.discountTotal > 0.009 && (
+              <div className="flex justify-between gap-4 border-b border-dotted border-[#aaa7a1] bg-[#f0f7f1] px-3 py-2.5">
+                <span className="font-bold tracking-wide text-[#18804a]">
+                  AHORRO POR DESCUENTO
+                </span>
+                <span className="font-bold tabular-nums text-[#18804a]">
+                  {money(ticket.discountTotal)}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between gap-4 border-b border-dotted border-[#aaa7a1] bg-[#f7f5f2] px-3 py-2.5">
               <span className="font-extrabold tracking-wide">TOTAL</span>
               <span className="font-semibold tabular-nums">
