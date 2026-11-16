@@ -1813,6 +1813,31 @@ function TicketPaper({
             </section>
           )}
 
+          {ticket.discountTotal > 0.009 && (
+            <section className="ticket-paper-section border border-[#d7e8d8] bg-[#f0f7f1] px-3.5 py-3">
+              <div className="flex items-start gap-2.5">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-[#18804a]">
+                  <span className="text-base font-black">%</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <h4 className="text-xs font-extrabold uppercase tracking-[0.1em] text-[#18804a]">
+                      Descuento aplicado
+                    </h4>
+                    <span className="text-sm font-extrabold tabular-nums text-[#18804a]">
+                      {money(ticket.discountTotal)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[10px] leading-relaxed text-[#47734f]">
+                    Este ahorro ya fue aplicado a los precios de los productos.
+                    Los importes del desglose y los totales ya reflejan el
+                    descuento.
+                  </p>
+                </div>
+              </div>
+            </section>
+          )}
+
           <section className="ticket-paper-section py-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h4 className="text-xs font-extrabold uppercase tracking-[0.13em] text-[#0C304F]">
@@ -1944,16 +1969,6 @@ function TicketPaper({
                 {money(ticket.purchasesTotal)}
               </span>
             </div>
-            {ticket.discountTotal > 0.009 && (
-              <div className="flex justify-between gap-4 border-b border-dotted border-[#aaa7a1] bg-[#f0f7f1] px-3 py-2.5">
-                <span className="font-bold tracking-wide text-[#18804a]">
-                  AHORRO POR DESCUENTO
-                </span>
-                <span className="font-bold tabular-nums text-[#18804a]">
-                  {money(ticket.discountTotal)}
-                </span>
-              </div>
-            )}
             <div className="flex justify-between gap-4 border-b border-dotted border-[#aaa7a1] bg-[#f7f5f2] px-3 py-2.5">
               <span className="font-extrabold tracking-wide">TOTAL</span>
               <span className="font-semibold tabular-nums">
@@ -1982,7 +1997,7 @@ function TicketPaper({
             <p className="font-serif text-xl font-black uppercase tracking-wide text-[#0C304F] sm:text-2xl">
               ¡Gracias por tu confianza!
             </p>
-            <p className="mt-1 text-[10px] font-semibold text-[#0C304F] sm:text-xs">
+            <p className="mt-1 text-[10px] font-semibold text-[#aaa7a1] sm:text-xs">
               * Los precios escritos se encuentran en moneda nacional (MXN)
             </p>
           </footer>
